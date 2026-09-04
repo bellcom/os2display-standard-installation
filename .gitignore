@@ -1,0 +1,22 @@
+# Credentials / application configuration
+.env
+.env.local
+.env.*.local
+db.txt
+
+# Certificates and private keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# Backups / dumps
+*.sql
+*.sql.gz
+*.bak
+*.backup
+
+# Temporary files
+*.tmp
+*~
