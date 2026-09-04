@@ -1,3 +1,13 @@
+## Project documentation
+
+For OS2Display 3.x development and upgrade work, see:
+
+- [AGENTS.md](AGENTS.md)
+- [OS2Display 3 architecture](docs/architecture/os2display-v3.md)
+- [Upgrade runbook](docs/runbooks/upgrade-v2-to-v3.md)
+- [Current project state](docs/ai/CURRENT_STATE.md)
+- [Architecture decisions](docs/decisions/)
+
 # OSdisplay
 Os2display install profile without docker. If you are looking for the older (debrecated) docker setup go [here](https://github.com/os2display/os2display-docker-compose)
 
