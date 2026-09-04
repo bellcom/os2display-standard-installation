@@ -1,0 +1,201 @@
+Brug denne prompt i en ny samtale:
+
+Jeg skal fortsætte arbejdet med at opgradere vores Bellcom OS2Display-installationer fra 2.x til OS2Display 3.x uden Docker.
+
+Vi har allerede gennemført en testopgradering af:
+
+os2display-test.ballerup.dk
+
+fra API 2.8.1 til OS2Display 3.0.0-rc8.
+
+Arkitekturen i V3 er ændret markant:
+
+API, Admin, Client og templates er samlet i display-api-service
+separate admin/ og client/ releases fra V2 bruges ikke længere
+V3 installeres fra GitHub production artifact, ikke som et almindeligt Git checkout
+PHP >= 8.4 er påkrævet
+V3-opdateringer skal bruge app:update
+
+Vi har lavet et Bellcom-upgradescript:
+
+UPDATE_V3_v4.sh
+
+Find gerne den tidligere fil fra denne ChatGPT-opgave/Library, hvis den ikke er vedhæftet i den nye samtale.
+
+Den testede procedure er:
+
+Eksisterende installation skal først være opdateret til OS2Display API 2.8.1.
+Alle 2.x Doctrine migrations skal være kørt (New: 0).
+PHP 8.4 skal være installeret.
+Følgende PHP 8.4 extensions skal som minimum kontrolleres før cutover:
+ctype
+fileinfo
+gd
+iconv
+pdo_mysql
+redis eller relay
+samt normale Symfony/PHP extensions som intl, mbstring, xml og opcache.
+På vores klassiske Apache-installation bruges mod_php, så libapache2-mod-php8.4 skal være aktivt.
+Redis kører lokalt på 127.0.0.1:6379 og skal kunne svare PONG.
+
+pdo_mysql skal testes før cutover. Vi ramte tidligere:
+
+An exception occurred in the driver: could not find driver
+
+fordi php8.4-mysql manglede. Updateren skal derfor køre en staging-test som:
+
+php8.4 bin/console doctrine:query:sql 'SELECT 1'
+
+inden live-tree skiftes.
+
+V2-konfiguration konverteres med:
+
+app:utils:convert-env-to-3x --skip-config-json
+
+Admin- og client-konfiguration skal konverteres fra de lokale:
+
+admin/config.json
+client/config.json
+
+og ikke hentes over HTTP, da /admin kan være beskyttet i proxyen.
+
+Production artifact downloades fra GitHub release og SHA-256 verificeres. Upstream checksum.txt kan indeholde en relativ filsti, så sammenlign kun selve SHA-256-værdien.
+Artifactet mangler aktuelt root .env. Hvis .env ikke findes efter extraction, skal updateren hente .env fra præcis samme GitHub release-tag. .env.local alene er ikke tilstrækkelig for Symfony Runtime.
+Følgende fra V2 skal bevares:
+config/jwt
+public/media
+konverteret produktionskonfiguration i .env.local
+Der skal laves databasebackup og komplet filbackup inden cutover.
+
+V3 staging skal testes med:
+
+php8.4 bin/console about --env=prod
+php8.4 bin/console doctrine:query:sql 'SELECT 1'
+
+Apache-vhosten skal ændres. De gamle V2 <Directory .../public/admin> og <Directory .../public/client> blokke skal fjernes.
+
+Der er en vigtig Apache-specialitet i V3:
+
+/client er en Symfony-route, men V3 artifactet indeholder samtidig den fysiske mappe:
+
+public/client/
+
+med bl.a.:
+
+public/client/release.json
+public/client/online-check/index.html
+public/client/online-check/1pixel.png
+
+Hvis man kun bruger:
+
+FallbackResource /index.php
+DirectoryIndex index.php
+
+vil Apache ramme den fysiske client-mappe og returnere 403.
+
+Vi løste det med en V3 Apache-regel svarende til:
+
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/client/release\.json$
+RewriteCond %{REQUEST_URI} !^/client/online-check(?:/|$)
+RewriteRule ^/?client(?:/.*)?$ /index.php [END]
+
+<Directory /var/www/DOMAIN/public_html/public/client/online-check>
+    Require all granted
+    Options FollowSymLinks
+    DirectoryIndex index.html
+    FallbackResource disabled
+</Directory>
+
+Dermed skal:
+
+/client/ -> Symfony
+/client/foo -> Symfony
+/client/release.json -> statisk fil
+/client/online-check/ -> statisk index.html
+
+Efter Apache-patch skal apache2ctl configtest være OK før cutover.
+
+Cutover flytter:
+
+public_html -> public_html.v2-TIMESTAMP
+
+og staging -> public_html.
+
+Database/content migration udføres derefter med:
+
+php8.4 bin/console doctrine:migrations:rollup --no-interaction
+php8.4 bin/console app:update --no-interaction
+php8.4 bin/console cache:clear --env=prod --no-debug
+
+Deprecated feeds skal kun rapporteres som standard:
+
+app:feed:remove-deprecated-feed-sources
+
+og må kun slettes med --force, hvis det er eksplicit besluttet.
+
+På mod_php-installationer bør Apache genstartes efter PHP-/cutover-ændringer, ikke kun reloades.
+
+Sluttest skal mindst kontrollere:
+
+/release.json
+/client/release.json
+/client/
+/client/online-check/
+/config/admin
+/config/client
+/admin
+
+både lokalt mod Apache og gennem den offentlige reverse proxy.
+
+Funktionelt skal vi kontrollere:
+admin-login
+tenants
+screens
+slides/playlister
+media
+preview
+client
+at en eksisterende fysisk skærm reconnecter uden ny pairing
+Behold DB-backup, filbackup og public_html.v2-TIMESTAMP, indtil en eksisterende skærm har reconnectet korrekt.
+
+Reverse proxy:
+
+Vores Nginx-proxy skal ikke have gamle V2 /admin- eller /client-speciallocations. V3 skal som udgangspunkt proxyes samlet via:
+
+location / {
+    proxy_pass http://BACKEND:80;
+}
+
+På testinstallationen fandt vi en særskilt IP-beskyttelse på /admin, som blev fjernet, fordi ingen andre installationer havde den, og den gav problemer med V3-kommunikationen.
+
+Vi fandt også en separat driftsfejl i den globale Nginx-konfiguration:
+
+/etc/nginx/snippets/fail2ban-deny.conf
+
+kunne indeholde en stale deny IP;, selv om:
+
+fail2ban-client banned IP
+
+viste ingen aktiv ban. Det er ikke en V3-fejl, men bør løses separat, så deny-filen synkroniseres korrekt med Fail2ban.
+
+Status på testinstallationen efter opgraderingen:
+
+OS2Display 3.0.0-rc8
+Doctrine migrations: latest, New 0
+templates opdateret
+screen layouts opdateret
+ingen deprecated feed sources
+Redis: PONG
+/release.json: 200
+/client/release.json: 200
+/client/: 200 efter Apache-rettelsen
+/client/online-check/: 200
+/config/admin: 200
+/config/client: 200
+
+Når vi fortsætter, så brug UPDATE_V3_v4.sh som udgangspunkt og gennemgå den kritisk, før vi bruger den på næste installation. Sørg især for, at alle PHP 8.4-moduler og databaseforbindelsen kontrolleres før cutover.
+
+Shell-sikkerhed: Når du giver mig kommandoer til direkte copy/paste i en aktiv shell, må du ikke bruge set -e, set -u, set -o pipefail, exit, logout, exec, reboot eller shutdown. Strict mode er kun okay inde i et gemt script. Giv fejlbeskeder og undlad afhængige trin, hvis en kommando fejler.
+
+Start med at opsummere, hvad du har forstået, og spørg derefter hvilken OS2Display-installation vi skal opgradere næste gang.

@@ -6,7 +6,7 @@ set -euo pipefail
 # -------------------------------------------------------------------
 
 ADMIN_VERSION="2.7.0"
-API_VERSION="2.8.0"
+API_VERSION="2.8.1"
 CLIENT_VERSION="2.3.0"
 
 DOMAIN="${1:-}"
@@ -227,7 +227,12 @@ else
     printf "WARNING: %s/db.txt was not found\n" "$WEB_ROOT"
 fi
 
-CHECK_DB="${DOMAIN//./_}"
+if [ -n "${DBNAME:-}" ]; then
+    CHECK_DB="$DBNAME"
+else
+    CHECK_DB="${DOMAIN//./_}"
+    CHECK_DB="${CHECK_DB//-/_}"
+fi
 
 DB_LIST="$(mysql -u root -Nse 'SHOW DATABASES;' 2>/dev/null || true)"
 
