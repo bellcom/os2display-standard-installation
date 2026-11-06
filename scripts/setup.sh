@@ -1,31 +1,63 @@
-#! /bin/bash
-apt-get update -qq -y
-apt-get upgrade -qq -y
-apt-get install -qq -y apache2 git
+#!/usr/bin/env bash
+# OS2Display host prerequisites (not an OS2Display application installer).
+# Supported here: Debian 12/13. Existing applications and PHP versions are preserved.
+set -e
 
-cd /etc/apt/sources.list.d/
-rm php.list
+fail() { printf 'ERROR: %s\n' "$*" >&2; return 1; }
 
-cd /var/www
-git clone https://github.com/os2display/os2display-standard-installation.git display
+if [ "$(id -u)" -ne 0 ]; then fail "Run this setup as root (sudo bash /var/setup.sh)"; exit 1; fi
+if [ ! -r /etc/os-release ]; then fail "Missing /etc/os-release"; exit 1; fi
+. /etc/os-release
+if [ "$ID" != "debian" ] || { [ "$VERSION_ID" != "12" ] && [ "$VERSION_ID" != "13" ]; }; then
+    fail "Supported by this script: Debian 12/13. Detected: $PRETTY_NAME"
+    exit 1
+fi
 
-sudo apt install ca-certificates apt-transport-https software-properties-common lsb-release -y
-curl -sSL https://packages.sury.org/php/README.txt | sudo bash -x
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y ca-certificates curl gnupg lsb-release apache2 git
 
-apt-get update -qq -y
-apt-get upgrade -qq -y
+# Install the Debian Sury PHP repository only when PHP 8.4 is not available.
+if ! apt-cache show php8.4-cli >/dev/null 2>&1; then
+    echo "Configuring the Sury PHP repository for PHP 8.4"
+    apt-get install -y apt-transport-https
+    curl -fsSL https://packages.sury.org/php/README.txt -o /tmp/os2display-sury-readme.sh
+    bash /tmp/os2display-sury-readme.sh
+    apt-get update
+fi
 
-apt-get install -qq -y pwgen mariadb-server libapache2-mod-php vim certbot python3-certbot-apache redis-server redis-tools composer git php8.3 php8.3-mbstring php8.3-intl libapache2-mod-php8.3 php8.3-gd php8.3-xml zip unzip php8.3-curl php8.3-xml php8.3-mysql php8.3-cli
-apt-get install -qq -y mariadb-server
+apt-get install -y \
+    pwgen mariadb-server redis-server redis-tools vim certbot python3-certbot-apache \
+    composer zip unzip \
+    php8.4-cli php8.4-common php8.4-mbstring php8.4-intl php8.4-gd \
+    php8.4-xml php8.4-curl php8.4-mysql php8.4-redis php8.4-opcache \
+    libapache2-mod-php8.4
 
-sudo a2enmod php8.3
-
-sudo apt purge php8.2*
-sudo a2enmod rewrite
-sudo a2enmod ssl
-
-update-alternatives --set php /usr/bin/php8.3
-
+# Do not purge previous PHP runtimes or change the system-wide PHP alternative.
+a2enmod rewrite ssl
+if ! apache2ctl configtest; then
+    fail "Apache configuration invalid; not restarting Apache"
+    exit 1
+fi
 systemctl restart apache2
-chmod u+x /var/www/display/INSTALL.sh
 
+mkdir -p /var/www
+if [ -e /var/www/display ]; then
+    if [ -d /var/www/display/.git ] &&
+       [ "$(git -C /var/www/display remote get-url origin 2>/dev/null)" = "https://github.com/bellcom/os2display-standard-installation.git" ]; then
+        echo "/var/www/display already points to Bellcom; leaving existing checkout untouched."
+    else
+        fail "/var/www/display already exists and was not modified. Check it before proceeding."
+        exit 1
+    fi
+else
+    git clone https://github.com/bellcom/os2display-standard-installation.git /var/www/display
+fi
+
+printf '\n=== Validation ===\n'
+php8.4 -v | head -n 2
+php8.4 -m | grep -Ei '^(gd|pdo_mysql|redis|mbstring|intl)$'
+redis-cli ping
+apache2ctl configtest
+echo "Host prerequisites installed. For existing OS2Display 2.8.1 use UPDATE_V3.sh."
+echo "INSTALL.sh is a legacy 2.x installer; do not run it for a fresh OS2Display 3.x deployment."
