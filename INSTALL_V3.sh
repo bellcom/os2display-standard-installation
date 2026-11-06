@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Fresh OS2Display 3 deployment (no upgrade, no overwrite).
+set -Ee -o pipefail
+umask 077
+die(){ printf 'ERROR: %s\n' "$*" >&2; }
+DOMAIN="$1"
+VERSION="$OS2DISPLAY_VERSION"
+[ -n "$VERSION" ] || VERSION=3.0.0-rc8
+[ "$EUID" -eq 0 ] || { die 'Run as root'; exit 1; }
+[[ "$DOMAIN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ && "$DOMAIN" == *.* && "$DOMAIN" != *..* ]] || { die 'Invalid domain'; exit 1; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { die 'Invalid version'; exit 1; }
+ROOT="/var/www/$DOMAIN"
+APP="$ROOT/public_html"
+VHOST="/etc/apache2/sites-available/$DOMAIN.conf"
+TMP=''
+cleanup(){ rc=$?; [ -z "$TMP" ] || rm -rf -- "$TMP"; [ "$rc" -eq 0 ] || die "Stopped ($rc); inspect partial site and database before retrying."; }
+trap cleanup EXIT
+for c in apache2ctl a2ensite curl mysql openssl php8.4 redis-cli sha256sum sudo tar wget; do command -v "$c" >/dev/null || { die "Missing: $c"; exit 1; }; done
+[ ! -e "$ROOT" ] && [ ! -e "$VHOST" ] || { die 'Site or vhost already exists'; exit 1; }
+[ -e /etc/apache2/mods-enabled/php8.4.load ] || { die 'Apache mod_php8.4 missing'; exit 1; }
+apache2ctl -M 2>/dev/null | grep -q rewrite_module || { die 'mod_rewrite missing'; exit 1; }
+php8.4 -r 'if(PHP_VERSION_ID<80400)exit(1);foreach(["ctype","fileinfo","gd","iconv","pdo_mysql","redis"] as $m){if(!extension_loaded($m)){fwrite(STDERR,"Missing $m\n");exit(1);}}' || { die 'PHP preflight failed'; exit 1; }
+[ "$(redis-cli ping 2>/dev/null)" = PONG ] || { die 'Redis unavailable'; exit 1; }
+mysql -NBe 'SELECT 1' >/dev/null || { die 'MariaDB root access unavailable'; exit 1; }
+apache2ctl configtest
+TMP="$(mktemp -d /tmp/bcdisplay-v3.XXXXXXXX)"
+ARCHIVE="display-api-service-$VERSION.tar.gz"
+BASE="https://github.com/os2display/display-api-service/releases/download/$VERSION"
+wget -q --show-progress -O "$TMP/$ARCHIVE" "$BASE/$ARCHIVE"
+wget -q -O "$TMP/checksum.txt" "$BASE/checksum.txt"
+EXPECTED="$(awk -v a="$ARCHIVE" '$0 ~ a"$" {print $1;exit}' "$TMP/checksum.txt")"
+if [ -z "$EXPECTED" ] && [ "$(grep -cve '^[[:space:]]*$' "$TMP/checksum.txt")" -eq 1 ]; then EXPECTED="$(awk 'NF{print $1;exit}' "$TMP/checksum.txt")"; fi
+ACTUAL="$(sha256sum "$TMP/$ARCHIVE" | awk '{print $1}')"
+[[ "$EXPECTED" =~ ^[[:xdigit:]]{64}$ ]] && [ "$EXPECTED" = "$ACTUAL" ] || { die 'SHA256 mismatch'; exit 1; }
+tar -tzf "$TMP/$ARCHIVE" | awk '/^\// || /(^|\/)\.\.($|\/)/ {bad=1} END{exit bad?1:0}' || { die 'Unsafe tar paths'; exit 1; }
+mkdir "$TMP/stage"
+tar -xzf "$TMP/$ARCHIVE" --no-same-owner -C "$TMP/stage"
+[ -s "$TMP/stage/.env" ] || wget -q -O "$TMP/stage/.env" "https://raw.githubusercontent.com/os2display/display-api-service/$VERSION/.env"
+for f in .env bin/console vendor/autoload.php public/index.php public/release.json public/client/release.json public/client/online-check/index.html; do [ -s "$TMP/stage/$f" ] || { die "Missing artifact file: $f"; exit 1; }; done
+printf 'Domain %s, release %s, path %s\n' "$DOMAIN" "$VERSION" "$APP"
+read -r -p 'Create new database, app and Apache vhost? [y/N] ' yes
+[[ "$yes" =~ ^[Yy]$ ]] || { echo Cancelled; exit 0; }
+DB="$(printf %s "$DOMAIN" | tr '.-' '__' | cut -c1-48)"
+USER_DB="bcdisp_$(openssl rand -hex 5)"
+PASS_DB="$(openssl rand -hex 24)"
+[ -z "$(mysql -NBe "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='$DB'")" ] || { die 'Database exists'; exit 1; }
+mysql -e "CREATE DATABASE \`$DB\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+mysql -e "CREATE USER '$USER_DB'@'localhost' IDENTIFIED BY '$PASS_DB'; GRANT ALL PRIVILEGES ON \`$DB\`.* TO '$USER_DB'@'localhost'"
+mkdir -p "$APP"
+cp -a "$TMP/stage/." "$APP/"
+mkdir -p "$APP/var" "$APP/public/media" "$APP/config/jwt"
+SECRET="$(openssl rand -hex 32)"
+JWT="$(openssl rand -hex 32)"
+DBVER="$(mysql -NBe 'SELECT VERSION()' | sed 's/-MariaDB.*//')-MariaDB"
+cat > "$APP/.env.local" <<EOF
+APP_ENV=prod
+APP_DEBUG=0
+APP_SECRET=$SECRET
+DATABASE_URL="mysql://$USER_DB:$PASS_DB@localhost:3306/$DB?serverVersion=$DBVER&charset=utf8mb4"
+JWT_PASSPHRASE=$JWT
+CORS_ALLOW_ORIGIN='^https://$DOMAIN$'
+REDIS_CACHE_DSN=redis://127.0.0.1:6379/0
+SESSION_HANDLER_DSN=redis://127.0.0.1:6379/0
+REDIS_CACHE_PREFIX=Display_$USER_DB
+TRUSTED_PROXIES=127.0.0.1,REMOTE_ADDR
+EOF
+chmod 0640 "$APP/.env.local"
+chown -R root:www-data "$APP"
+chown -R www-data:www-data "$APP/var" "$APP/public/media" "$APP/config/jwt"
+(
+cd "$APP"
+sudo -u www-data php8.4 bin/console lexik:jwt:generate-keypair --skip-if-exists --no-interaction
+sudo -u www-data php8.4 bin/console about --env=prod
+sudo -u www-data php8.4 bin/console doctrine:query:sql 'SELECT 1' --no-interaction
+sudo -u www-data php8.4 bin/console app:update --no-interaction
+sudo -u www-data php8.4 bin/console cache:clear --env=prod --no-debug
+)
+cat > "$VHOST" <<EOF
+<VirtualHost *:80>
+ ServerName $DOMAIN
+ DocumentRoot $APP/public
+ <Directory $APP/public>
+  Require all granted
+  Options FollowSymLinks
+  AllowOverride None
+  FallbackResource /index.php
+ </Directory>
+ RewriteEngine On
+ RewriteCond %{REQUEST_URI} !^/client/release\\.json$
+ RewriteCond %{REQUEST_URI} !^/client/online-check(?:/|$)
+ RewriteRule ^/?client(?:/.*)?$ /index.php [END]
+ <Directory $APP/public/client/online-check>
+  Require all granted
+  Options FollowSymLinks
+  DirectoryIndex index.html
+  FallbackResource disabled
+ </Directory>
+ ErrorLog \${APACHE_LOG_DIR}/$DOMAIN-error.log
+ CustomLog \${APACHE_LOG_DIR}/$DOMAIN-access.log combined
+</VirtualHost>
+EOF
+apache2ctl configtest
+a2ensite "$DOMAIN.conf"
+apache2ctl configtest
+systemctl restart apache2
+for path in /release.json /client/release.json /client/ /client/online-check/ /config/admin /config/client /admin; do
+ curl -fsS -H "Host: $DOMAIN" --max-time 15 "http://127.0.0.1$path" -o /dev/null && printf 'OK: %s\n' "$path" || printf 'WARNING: %s\n' "$path" >&2
+done
+printf 'Installed %s in %s\n' "$VERSION" "$APP"
+echo 'Next: configure TLS, then use app:tenant:add and app:user:add as www-data with php8.4.'
