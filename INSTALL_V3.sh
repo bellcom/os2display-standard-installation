@@ -15,9 +15,12 @@ VHOST="/etc/apache2/sites-available/$DOMAIN.conf"
 TMP=''
 cleanup(){ rc=$?; [ -z "$TMP" ] || rm -rf -- "$TMP"; [ "$rc" -eq 0 ] || die "Stopped ($rc); inspect partial site and database before retrying."; }
 trap cleanup EXIT
-for c in apache2ctl a2ensite curl mysql openssl php8.4 redis-cli sha256sum sudo tar wget; do command -v "$c" >/dev/null || { die "Missing: $c"; exit 1; }; done
+for c in apache2ctl a2ensite curl mysql openssl php8.4 redis-cli sha256sum sudo systemctl tar wget; do command -v "$c" >/dev/null || { die "Missing: $c"; exit 1; }; done
 [ ! -e "$ROOT" ] && [ ! -e "$VHOST" ] || { die 'Site or vhost already exists'; exit 1; }
-[ -e /etc/apache2/mods-enabled/php8.4.load ] || { die 'Apache mod_php8.4 missing'; exit 1; }
+# Apache serves Symfony through PHP-FPM 8.4; mod_php is neither needed nor supported here.
+[ -S /run/php/php8.4-fpm.sock ] || { die 'PHP-FPM 8.4 socket missing: /run/php/php8.4-fpm.sock'; exit 1; }
+systemctl is-active --quiet php8.4-fpm || { die 'PHP-FPM 8.4 service not running'; exit 1; }
+apache2ctl -M 2>/dev/null | grep -q proxy_fcgi_module || { die 'Apache mod_proxy_fcgi missing (a2enmod proxy_fcgi)'; exit 1; }
 apache2ctl -M 2>/dev/null | grep -q rewrite_module || { die 'mod_rewrite missing'; exit 1; }
 php8.4 -r 'if(PHP_VERSION_ID<80400)exit(1);foreach(["ctype","fileinfo","gd","iconv","pdo_mysql","redis"] as $m){if(!extension_loaded($m)){fwrite(STDERR,"Missing $m\n");exit(1);}}' || { die 'PHP preflight failed'; exit 1; }
 [ "$(redis-cli ping 2>/dev/null)" = PONG ] || { die 'Redis unavailable'; exit 1; }
@@ -79,6 +82,9 @@ cat > "$VHOST" <<EOF
 <VirtualHost *:80>
  ServerName $DOMAIN
  DocumentRoot $APP/public
+ <FilesMatch "\\.php$">
+  SetHandler "proxy:unix:/run/php/php8.4-fpm.sock|fcgi://localhost/"
+ </FilesMatch>
  <Directory $APP/public>
   Require all granted
   Options FollowSymLinks
@@ -107,4 +113,4 @@ for path in /release.json /client/release.json /client/ /client/online-check/ /c
  curl -fsS -H "Host: $DOMAIN" --max-time 15 "http://127.0.0.1$path" -o /dev/null && printf 'OK: %s\n' "$path" || printf 'WARNING: %s\n' "$path" >&2
 done
 printf 'Installed %s in %s\n' "$VERSION" "$APP"
-echo 'Next: configure TLS, then use app:tenant:add and app:user:add as www-data with php8.4.'
+echo 'Next: verify HTTPS on the reverse proxy, then use app:tenant:add and app:user:add as www-data with php8.4.'
