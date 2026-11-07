@@ -27,14 +27,17 @@ if ! apt-cache show php8.4-cli >/dev/null 2>&1; then
 fi
 
 apt-get install -y \
-    pwgen mariadb-server redis-server redis-tools vim certbot python3-certbot-apache \
+    pwgen mariadb-server redis-server redis-tools vim \
     composer zip unzip \
     php8.4-cli php8.4-common php8.4-mbstring php8.4-intl php8.4-gd \
     php8.4-xml php8.4-curl php8.4-mysql php8.4-redis php8.4-opcache \
-    libapache2-mod-php8.4
+    php8.4-fpm
 
 # Do not purge previous PHP runtimes or change the system-wide PHP alternative.
-a2enmod rewrite ssl
+a2enmod rewrite proxy_fcgi setenvif
+a2enconf php8.4-fpm
+systemctl enable --now php8.4-fpm
+[ -S /run/php/php8.4-fpm.sock ] || { fail "PHP-FPM socket missing"; exit 1; }
 if ! apache2ctl configtest; then
     fail "Apache configuration invalid; not restarting Apache"
     exit 1
@@ -58,6 +61,7 @@ printf '\n=== Validation ===\n'
 php8.4 -v | head -n 2
 php8.4 -m | grep -Ei '^(gd|pdo_mysql|redis|mbstring|intl)$'
 redis-cli ping
+systemctl is-active php8.4-fpm
 apache2ctl configtest
 echo "Host prerequisites installed. For existing OS2Display 2.8.1 use UPDATE_V3.sh."
 echo "INSTALL.sh is a legacy 2.x installer; do not run it for a fresh OS2Display 3.x deployment."
