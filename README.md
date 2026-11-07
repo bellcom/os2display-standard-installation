@@ -61,7 +61,7 @@ sudo -u www-data php8.4 bin/console app:tenant:add
 sudo -u www-data php8.4 bin/console app:user:add
 ```
 
-Verify: `php8.4 -m`, `redis-cli ping`, `apache2ctl configtest`, `php8.4 bin/console doctrine:migrations:status --no-interaction` (as www-data), and HTTP routes `/admin`, `/client/`, `/config/admin`, `/config/client`. The initial Apache vhost listens on HTTP port 80 only; TLS is a separate step. If the installer stops after creating the database, inspect and clean up the partial installation manually before retrying. **Verified 2026-11-07:** the complete clean-host installation of OS2Display `3.0.0-rc8` on Debian 13 passed on `test-bdk-display01.bellcom.dk` using PHP-FPM 8.4. All seven local HTTP endpoints returned 200, and `/admin` through the external HTTPS proxy returned 200. Tenant creation, admin login and real screen/content workflows were not part of that clean-install verification.
+Verify: `php8.4 -m`, `redis-cli ping`, `apache2ctl configtest`, `php8.4 bin/console doctrine:migrations:status --no-interaction` (as www-data), and HTTP routes `/admin`, `/client/`, `/config/admin`, `/config/client`. The initial Apache vhost listens on HTTP port 80 only; TLS is a separate step. If the installer stops after creating the database, inspect and clean up the partial installation manually before retrying. **Verified 2026-11-07:** the complete clean-host installation of OS2Display `3.0.0-rc8` on Debian 13 passed on `test-bdk-display01.bellcom.dk` using PHP-FPM 8.4. All seven local HTTP endpoints returned 200, and `/admin` through the external HTTPS proxy returned 200. The operator subsequently confirmed that the test environment and its application functionality were tested successfully.
 
 ## Clean-install verification (2026-11-07)
 
@@ -75,7 +75,7 @@ Verify: `php8.4 -m`, `redis-cli ping`, `apache2ctl configtest`, `php8.4 bin/cons
 
 **Prior production-host finding:** the first installation at `bdkdisplay.bcdisplay.dk` stopped at `Could not open input file: bin/console`: `umask 077` produced non-traversable site directories for `www-data`. That partial deployment was recovered by adjusting permissions and running Symfony setup commands, then manually creating its Apache FPM vhost. The new installer includes the permanent permission fix (PR #4). Host setup previously installed `mod_php8.4`, while the app installer expected FPM; setup now provisions FPM (PR #5).
 
-**Not yet verified as part of the clean-install test:** tenant/admin creation and login on the test host, interactive screen/layout/media operations, physical display pairing, and any production traffic. HTTP 200 confirms route availability, not application authorization or end-user workflows.
+**Functional validation:** The operator confirmed successful functional testing of the installed test environment. Automated logs independently verify setup and all seven endpoint responses.
 
 ## Upgrade an existing OS2Display 2.8.1 installation to 3.x
 
