@@ -61,7 +61,21 @@ sudo -u www-data php8.4 bin/console app:tenant:add
 sudo -u www-data php8.4 bin/console app:user:add
 ```
 
-Verify: `php8.4 -m`, `redis-cli ping`, `apache2ctl configtest`, `php8.4 bin/console doctrine:migrations:status --no-interaction` (as www-data), and HTTP routes `/admin`, `/client/`, `/config/admin`, `/config/client`. The initial Apache vhost listens on HTTP port 80 only; TLS is a separate step. If the installer stops after creating the database, inspect and clean up the partial installation manually before retrying. **This installer has been used successfully for an OS2Display 3.0.0-rc8 installation on Debian 13; a clean end-to-end installation test is still pending.**
+Verify: `php8.4 -m`, `redis-cli ping`, `apache2ctl configtest`, `php8.4 bin/console doctrine:migrations:status --no-interaction` (as www-data), and HTTP routes `/admin`, `/client/`, `/config/admin`, `/config/client`. The initial Apache vhost listens on HTTP port 80 only; TLS is a separate step. If the installer stops after creating the database, inspect and clean up the partial installation manually before retrying. **Verified 2026-11-07:** the complete clean-host installation of OS2Display `3.0.0-rc8` on Debian 13 passed on `test-bdk-display01.bellcom.dk` using PHP-FPM 8.4. All seven local HTTP endpoints returned 200, and `/admin` through the external HTTPS proxy returned 200. Tenant creation, admin login and real screen/content workflows were not part of that clean-install verification.
+
+## Clean-install verification (2026-11-07)
+
+**Host:** `test-bdk-display01.bellcom.dk` (Debian 13 trixie, fresh host). **Public domain:** `test-bdkdisplay.bcdisplay.dk`. TLS is terminated on a separate Nginx reverse proxy; the app's Apache vhost uses port 80 and PHP-FPM 8.4.
+
+1. `scripts/setup.sh` provisioned Apache, PHP 8.4.27 / PHP-FPM, MariaDB 11.8.6, Redis, and the Bellcom repository. Checks: FPM active with `/run/php/php8.4-fpm.sock`, `proxy_fcgi` and `rewrite` loaded, `redis-cli ping` => `PONG`, `apache2ctl configtest` => `Syntax OK`.
+2. `INSTALL_V3.sh test-bdkdisplay.bcdisplay.dk` completed **without manual repairs**: verified release archive/checksum; generated JWT keys; connected to database (`SELECT 1`); ran Doctrine migration `DoctrineMigrations\\Version20260506215847` (1 migration, 77 SQL queries); updated templates/layouts; cleared Symfony prod cache; created and activated the Apache vhost with PHP-FPM.
+3. All local endpoint probes returned **HTTP 200**: `/release.json`, `/client/release.json`, `/client/`, `/client/online-check/`, `/config/admin`, `/config/client`, `/admin`. Apache error log was empty during the probe.
+4. External `https://test-bdkdisplay.bcdisplay.dk/admin` returned **HTTP/2 200** through Nginx.
+5. Running the installer a second time correctly refused an existing site/vhost (`ERROR: Site or vhost already exists`). **Do not rerun it on an installed site.**
+
+**Prior production-host finding:** the first installation at `bdkdisplay.bcdisplay.dk` stopped at `Could not open input file: bin/console`: `umask 077` produced non-traversable site directories for `www-data`. That partial deployment was recovered by adjusting permissions and running Symfony setup commands, then manually creating its Apache FPM vhost. The new installer includes the permanent permission fix (PR #4). Host setup previously installed `mod_php8.4`, while the app installer expected FPM; setup now provisions FPM (PR #5).
+
+**Not yet verified as part of the clean-install test:** tenant/admin creation and login on the test host, interactive screen/layout/media operations, physical display pairing, and any production traffic. HTTP 200 confirms route availability, not application authorization or end-user workflows.
 
 ## Upgrade an existing OS2Display 2.8.1 installation to 3.x
 
