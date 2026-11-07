@@ -1,6 +1,6 @@
 # Current project state
 
-Last updated: 2026-09-04
+Last updated: 2026-11-07
 
 ## Project
 
@@ -9,6 +9,14 @@ Bellcom maintains a native, non-Docker OS2Display installation and upgrade profi
 Repository:
 
 `bellcom/os2display-standard-installation`
+
+## OS2Display 3 fresh installation: verified (2026-11-07)
+
+Production candidate `bdkdisplay.bcdisplay.dk` was installed on `bdk-display01.bellcom.dk` (Debian 13) with OS2Display 3.0.0-rc8. Initial installer issues: it required mod_php instead of FPM (fixed in PR #3), and `umask 077` caused the app root to be inaccessible to `www-data` (fixed in PR #4). The partial deployment was recovered manually; its Symfony initialization, Apache FPM routing, seven HTTP endpoints and external HTTPS routes worked. A tenant and admin login on the production candidate were reported working by the operator.
+
+**Independent clean-install validation:** on a fresh Debian 13 server `test-bdk-display01.bellcom.dk` the host setup (PR #5 switches it to FPM) and `INSTALL_V3.sh test-bdkdisplay.bcdisplay.dk` completed with no manual intervention. PHP 8.4.27 FPM, Redis PONG, MariaDB 11.8.6, JWT generation, DB connectivity, migration `DoctrineMigrations\\Version20260506215847` (1 migration / 77 SQL queries), templates/layouts update, cache clear and Apache vhost were successful. The local probes `/release.json`, `/client/release.json`, `/client/`, `/client/online-check/`, `/config/admin`, `/config/client`, `/admin` all returned HTTP 200; empty Apache error log. External test `https://test-bdkdisplay.bcdisplay.dk/admin` returned HTTP/2 200. A second `INSTALL_V3.sh` invocation correctly refused to overwrite the site.
+
+**Outstanding:** test tenant/user login and actual content/screen behavior on the test host; physical display pairing; longer-running operational checks. The OS2Display 3.0.0-rc8 target is a release candidate, not an automatically discovered latest stable release. No v2 migration behavior is established by this fresh-install test.
 
 ## OS2Display 3 upgrade status
 
