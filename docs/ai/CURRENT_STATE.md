@@ -16,7 +16,7 @@ Production candidate `bdkdisplay.bcdisplay.dk` was installed on `bdk-display01.b
 
 **Independent clean-install validation:** on a fresh Debian 13 server `test-bdk-display01.bellcom.dk` the host setup (PR #5 switches it to FPM) and `INSTALL_V3.sh test-bdkdisplay.bcdisplay.dk` completed with no manual intervention. PHP 8.4.27 FPM, Redis PONG, MariaDB 11.8.6, JWT generation, DB connectivity, migration `DoctrineMigrations\\Version20260506215847` (1 migration / 77 SQL queries), templates/layouts update, cache clear and Apache vhost were successful. The local probes `/release.json`, `/client/release.json`, `/client/`, `/client/online-check/`, `/config/admin`, `/config/client`, `/admin` all returned HTTP 200; empty Apache error log. External test `https://test-bdkdisplay.bcdisplay.dk/admin` returned HTTP/2 200. A second `INSTALL_V3.sh` invocation correctly refused to overwrite the site.
 
-**Outstanding:** test tenant/user login and actual content/screen behavior on the test host; physical display pairing; longer-running operational checks. The OS2Display 3.0.0-rc8 target is a release candidate, not an automatically discovered latest stable release. No v2 migration behavior is established by this fresh-install test.
+**Functional validation:** The operator confirmed successful testing of the newly installed test environment, in addition to the automated installation and HTTP checks. The OS2Display 3.0.0-rc8 target is a release candidate, not an automatically discovered latest stable release. This fresh-install test does not establish v2 migration behavior.
 
 ## OS2Display 3 upgrade status
 
