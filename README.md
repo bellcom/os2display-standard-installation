@@ -18,7 +18,7 @@ This repository contains Bellcom's Debian/Apache/MariaDB/Redis installation tool
 
 Test target for this updated setup: **Debian 12 or 13** with root/sudo privileges, DNS for the eventual application domain, and network access to Debian/Sury, GitHub and OS2Display releases. Ubuntu support is not covered by this revised setup script.
 
-The script installs Apache, MariaDB, Redis and PHP **8.4** with `pdo_mysql` and `redis` support. It clones **this Bellcom repository** into `/var/www/display`, does **not** delete older PHP installations or databases, and does **not** change the system-wide `php` alternative. It may install a Sury PHP package repository and restart Apache; review the script before running it.
+The script installs Apache, MariaDB, Redis and PHP **8.4** with `pdo_mysql` and `redis` support. It clones **this Bellcom repository** into `/var/www/display`, does **not** delete older PHP installations or databases, and does **not** change the system-wide `php` alternative. It may install a Sury PHP package repository and restart Apache; review the script before running it. It uses PHP-FPM 8.4 (not mod_php).
 
 ```bash
 sudo wget -O /var/setup.sh https://raw.githubusercontent.com/bellcom/os2display-standard-installation/main/scripts/setup.sh &&
@@ -33,6 +33,7 @@ php8.4 -v
 php8.4 -m | grep -Ei '^(gd|pdo_mysql|redis|mbstring|intl)$'
 redis-cli ping
 sudo apache2ctl configtest
+systemctl is-active php8.4-fpm
 git -C /var/www/display remote -v
 ```
 
@@ -40,7 +41,7 @@ Expected Redis result: `PONG`. The Git remote must be `https://github.com/bellco
 
 ## Fresh OS2Display 3 installation (new domain only)
 
-This is a new native installer for Debian with Apache mod_php 8.4, MariaDB, Redis and a valid DNS name. The default target is **3.0.0-rc8**; set `OS2DISPLAY_VERSION` to a separately verified published release tag to use another version. It does not select the latest release automatically.
+This is a native installer for Debian with Apache + PHP-FPM 8.4, MariaDB, Redis and a valid DNS name. The default target is **3.0.0-rc8**; set `OS2DISPLAY_VERSION` to a separately verified published release tag to use another version. It does not select the latest release automatically.
 
 The installer refuses to overwrite an existing site or Apache vhost. It downloads the official production artifact and matching checksum, creates a new MariaDB database and user, writes production secrets to `.env.local`, generates JWT keys, invokes `app:update` (database migrations, bundled templates, layouts), and configures a basic HTTP Apache vhost. The installer is not an updater and must **never** be used for an existing v2/v3 site.
 
@@ -60,7 +61,7 @@ sudo -u www-data php8.4 bin/console app:tenant:add
 sudo -u www-data php8.4 bin/console app:user:add
 ```
 
-Verify: `php8.4 -m`, `redis-cli ping`, `apache2ctl configtest`, `php8.4 bin/console doctrine:migrations:status --no-interaction` (as www-data), and HTTP routes `/admin`, `/client/`, `/config/admin`, `/config/client`. The initial Apache vhost listens on HTTP port 80 only; TLS is a separate step. If the installer stops after creating the database, inspect and clean up the partial installation manually before retrying. **This new installer has not yet been validated on a disposable Debian VM or production server.**
+Verify: `php8.4 -m`, `redis-cli ping`, `apache2ctl configtest`, `php8.4 bin/console doctrine:migrations:status --no-interaction` (as www-data), and HTTP routes `/admin`, `/client/`, `/config/admin`, `/config/client`. The initial Apache vhost listens on HTTP port 80 only; TLS is a separate step. If the installer stops after creating the database, inspect and clean up the partial installation manually before retrying. **This installer has been used successfully for an OS2Display 3.0.0-rc8 installation on Debian 13; a clean end-to-end installation test is still pending.**
 
 ## Upgrade an existing OS2Display 2.8.1 installation to 3.x
 
