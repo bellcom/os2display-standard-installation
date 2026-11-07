@@ -68,8 +68,14 @@ REDIS_CACHE_PREFIX=Display_$USER_DB
 TRUSTED_PROXIES=127.0.0.1,REMOTE_ADDR
 EOF
 chmod 0640 "$APP/.env.local"
+# The restrictive umask creates ROOT and APP with mode 0700 by default.
+# Grant www-data traversal/read access without making the release world-readable.
+chown root:www-data "$ROOT"
 chown -R root:www-data "$APP"
+chmod 0750 "$ROOT" "$APP"
+chmod -R g+rX "$APP"
 chown -R www-data:www-data "$APP/var" "$APP/public/media" "$APP/config/jwt"
+sudo -u www-data test -r "$APP/bin/console" || { die 'www-data cannot read bin/console'; exit 1; }
 (
 cd "$APP"
 sudo -u www-data php8.4 bin/console lexik:jwt:generate-keypair --skip-if-exists --no-interaction
