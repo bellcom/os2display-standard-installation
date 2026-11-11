@@ -52,11 +52,11 @@ check_web_php_limits() {
         foreach ($limits as $key => $minimum) {
             $value = ini_get($key);
             $ok = $toMb($value) >= $minimum;
-            printf("%s = %s (minimum %dM): %s\\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
+            printf("%s = %s (minimum %dM): %s\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
             if (!$ok) $failed = true;
         }
         if ($toMb(ini_get("post_max_size")) < $toMb(ini_get("upload_max_filesize"))) {
-            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\\n");
+            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\n");
             $failed = true;
         }
         if ($failed) exit(1);
@@ -781,6 +781,40 @@ rm -rf "$STAGE_ROOT/public/media"
 mkdir -p "$STAGE_ROOT/public/media"
 cp -a "$PUBLIC_HTML/public/media/." "$STAGE_ROOT/public/media/"
 
+# Keep all converted 2.x/local values, but explicitly include any new 3.x
+# defaults that the converter does not export. This makes the resulting
+# .env.local self-contained and avoids surprises when release defaults change.
+# Do not overwrite keys already present in the converted configuration.
+info "Adding missing 3.x default variables to .env.local"
+python3 - "$STAGE_ROOT/.env" "$CONFIG_EXPORT" <<'DEFAULTENVPY'
+import re
+import sys
+from pathlib import Path
+
+source, target = (Path(value) for value in sys.argv[1:])
+assignment = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+def variable_name(line):
+    match = assignment.match(line)
+    return match.group(1) if match else None
+
+existing = {name for line in target.read_text().splitlines()
+            if (name := variable_name(line))}
+missing = []
+for line in source.read_text().splitlines():
+    name = variable_name(line)
+    if name and name not in existing:
+        missing.append(line)
+        existing.add(name)
+
+if missing:
+    with target.open("a") as output:
+        output.write("\n# Missing defaults from OS2Display 3.x .env\n")
+        output.write("\n".join(missing) + "\n")
+
+print(f"Included {len(missing)} missing 3.x default variables; existing overrides unchanged.")
+DEFAULTENVPY
+
 install -o root -g www-data -m 0640 "$CONFIG_EXPORT" "$STAGE_ROOT/.env.local"
 printf '%s\n' "$TARGET_VERSION" > "$STAGE_ROOT/.os2display-version"
 mkdir -p "$STAGE_ROOT/var"
@@ -872,11 +906,20 @@ done
 
 # Then verify the public path through the reverse proxy. /client/ is important:
 # /client/release.json can work while the actual client route is broken.
+# On Bellcom installations /admin/ may intentionally be restricted by the
+# reverse proxy. A 403 is expected only if the same path works locally.
 for path in /release.json /client/release.json /client/ /client/online-check/ /config/admin /config/client /admin; do
-    if curl --fail --silent --show-error --location --max-time 20 "$APP_URL$path" >/dev/null; then
+    public_status="$(curl --silent --show-error --location --max-time 20 \
+        --output /dev/null --write-out '%{http_code}' "$APP_URL$path")" && curl_ok=1 || curl_ok=0
+    if [ "$curl_ok" -eq 1 ] && [[ "$public_status" =~ ^2[0-9][0-9]$ ]]; then
         printf 'OK public: %s\n' "$APP_URL$path"
+    elif [ "$path" = /admin ] && [ "$curl_ok" -eq 1 ] && [ "$public_status" = 403 ] && \
+         curl --fail --silent --show-error --max-time 20 -H "Host: $DOMAIN" \
+             http://127.0.0.1/admin/ >/dev/null; then
+        printf 'INFO public: %s/admin/ returns HTTP 403 (reverse-proxy IP restriction; backend OK).\n' "$APP_URL"
     else
-        printf 'WARNING public: %s failed. Check reverse-proxy access rules and logs.\n' "$APP_URL$path" >&2
+        printf 'WARNING public: %s failed (HTTP %s). Check reverse-proxy access rules and logs.\n' \
+            "$APP_URL$path" "$public_status" >&2
     fi
 done
 
