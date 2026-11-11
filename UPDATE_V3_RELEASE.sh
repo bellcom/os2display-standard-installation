@@ -84,13 +84,13 @@ if ! [[ "$VERSION" =~ ^3\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then die 'Only ex
 for cmd in php8.4 sudo tar sha256sum wget curl apache2ctl mysqldump mysql python3; do
     if ! command -v "$cmd" >/dev/null; then die "Missing tool: $cmd"; exit 1; fi
 done
-if [ ! -f "$LIVE/.os2display-version" ] || [ ! -s "$LIVE/.env.local" ] ||
+if [ ! -s "$LIVE/public/release.json" ] || [ ! -s "$LIVE/.env.local" ] ||
    [ ! -s "$LIVE/.env" ] || [ ! -f "$LIVE/bin/console" ] ||
    [ ! -d "$LIVE/config/jwt" ] || [ ! -d "$LIVE/public/media" ]; then
     die "Missing existing V3 release tree/config/JWT/media in $LIVE"; exit 1
 fi
-CURRENT="$(tr -d '\r\n' < "$LIVE/.os2display-version")"
-if ! [[ "$CURRENT" =~ ^3\. ]]; then die "Existing release is not V3: $CURRENT"; exit 1; fi
+CURRENT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get(\"releaseVersion\",\"\"))' "$LIVE/public/release.json")"
+if [ "$CURRENT" != "3.0.0-rc8" ]; then die "Expected 3.0.0-rc8, found: $CURRENT"; exit 1; fi
 if [ "$CURRENT" = "$VERSION" ]; then die "Already running $VERSION"; exit 1; fi
 
 for ext in ctype fileinfo gd iconv pdo_mysql redis imagick; do
@@ -168,12 +168,33 @@ then die 'Release archive has unsafe paths or links'; exit 1; fi
 
 mkdir -p "$STAGE"
 tar -xzf "$TMP/$ARCHIVE" --no-same-owner -C "$STAGE"
+if [ ! -f "$STAGE/.env" ]; then
+    curl -fLsS "https://raw.githubusercontent.com/os2display/os2display/$VERSION/.env" -o "$STAGE/.env"
+fi
 for entry in .env bin/console vendor/autoload.php public/index.php public/release.json public/client/release.json; do
     if [ ! -s "$STAGE/$entry" ]; then die "Missing artifact file: $entry"; exit 1; fi
 done
 
 # Preserve the entire existing local configuration/state, not only dotenv.
 cp -a "$LIVE/.env.local" "$STAGE/.env.local"
+python3 - "$STAGE/.env" "$STAGE/.env.local" <<'DEFAULTS'
+from pathlib import Path
+import re, sys
+base, local = map(Path, sys.argv[1:])
+pattern = re.compile(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=')
+current = {match.group(1) for line in local.read_text().splitlines()
+           if (match := pattern.match(line))}
+missing = []
+for line in base.read_text().splitlines():
+    match = pattern.match(line)
+    if match and match.group(1) not in current:
+        missing.append(line)
+        current.add(match.group(1))
+if missing:
+    with local.open('a') as output:
+        output.write("\n# New release defaults\n" + "\n".join(missing) + "\n")
+print("Added missing 3.x defaults:", len(missing))
+DEFAULTS
 for item in config/jwt public/media; do
     rm -rf -- "$STAGE/$item"
     mkdir -p "$STAGE/$item"
@@ -223,6 +244,7 @@ SWAPPED=1
   sudo -u www-data php8.4 bin/console cache:clear --env=prod --no-debug
 )
 apache2ctl configtest
+systemctl reload php8.4-fpm
 systemctl reload apache2
 for path in /release.json /client/release.json /client/ /client/online-check/ /config/admin /config/client /admin; do
     code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -H "Host: $DOMAIN" -H 'X-Forwarded-Proto: https' "http://127.0.0.1$path")"
