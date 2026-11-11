@@ -18,7 +18,7 @@ IFS=$'\n\t'
 #   OS2DISPLAY_REMOVE_DEPRECATED_FEEDS=1
 # -----------------------------------------------------------------------------
 
-TARGET_VERSION="${OS2DISPLAY_VERSION:-3.0.0-rc8}"
+TARGET_VERSION="${OS2DISPLAY_VERSION:-3.0.0}"
 REQUIRED_2X_VERSION="${OS2DISPLAY_REQUIRED_2X_VERSION:-2.8.1}"
 REMOVE_DEPRECATED_FEEDS="${OS2DISPLAY_REMOVE_DEPRECATED_FEEDS:-0}"
 DOMAIN="${1:-}"
@@ -192,12 +192,15 @@ Usage:
   ./UPDATE_V3.sh your.domain.com
 
 Optional environment variables:
-  OS2DISPLAY_VERSION=3.0.0-rc8
+  OS2DISPLAY_VERSION=3.0.0
   OS2DISPLAY_REQUIRED_2X_VERSION=2.8.1
   OS2DISPLAY_2X_PHP_BIN=/usr/bin/php8.3
   OS2DISPLAY_V3_PHP_BIN=/usr/bin/php8.4
   OS2DISPLAY_APP_URL=https://your.domain.com
   OS2DISPLAY_REMOVE_DEPRECATED_FEEDS=1
+  OS2DISPLAY_WEB_ROOT=/var/www/your.domain.com
+  OS2DISPLAY_APP_DIR=public
+  OS2DISPLAY_SOURCE_REF_DIR=/var/www/your.domain.com/public.v2-backup
 
 USAGE
     if [ -z "$DOMAIN" ]; then
@@ -229,9 +232,23 @@ do
     need_command "$command_name" || exit 1
 done
 
-WEB_ROOT="/var/www/$DOMAIN"
-PUBLIC_HTML="$WEB_ROOT/public_html"
+WEB_ROOT="${OS2DISPLAY_WEB_ROOT:-/var/www/$DOMAIN}"
+APP_DIR="${OS2DISPLAY_APP_DIR:-public_html}"
 BACKUP_FOLDER="/var/www/backup"
+if ! [[ "$APP_DIR" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || [ "$APP_DIR" = "." ] || [ "$APP_DIR" = ".." ]; then
+    error "Invalid OS2DISPLAY_APP_DIR: $APP_DIR"
+    exit 1
+fi
+if [ ! -d "$WEB_ROOT" ]; then
+    error "Web root does not exist: $WEB_ROOT"
+    exit 1
+fi
+WEB_ROOT="$(realpath -e "$WEB_ROOT")"
+PUBLIC_HTML="$WEB_ROOT/$APP_DIR"
+if [ -L "$PUBLIC_HTML" ]; then
+    error "The application directory must not be a symlink: $PUBLIC_HTML"
+    exit 1
+fi
 APP_URL="${OS2DISPLAY_APP_URL:-https://$DOMAIN}"
 
 if [ ! -d "$PUBLIC_HTML" ]; then
@@ -240,8 +257,25 @@ if [ ! -d "$PUBLIC_HTML" ]; then
 fi
 
 if [ ! -d "$PUBLIC_HTML/.git" ]; then
-    error "$PUBLIC_HTML is not the expected 2.x Git checkout"
-    exit 1
+    # Installations from a 2.8.1 git archive have no Git metadata.
+    # Validate the deployed code against that tag in the preserved old
+    # checkout rather than accepting an unverified version override.
+    SOURCE_REF_DIR="${OS2DISPLAY_SOURCE_REF_DIR:-}"
+    if [ -z "$SOURCE_REF_DIR" ] || [ ! -d "$SOURCE_REF_DIR/.git" ]; then
+        error "2.x archive has no .git: set OS2DISPLAY_SOURCE_REF_DIR to a preserved checkout containing the $REQUIRED_2X_VERSION tag"
+        exit 1
+    fi
+    for source_file in composer.json composer.lock src/Command/Utils/ConvertEnvTo3xCommand.php migrations/Version20260507120000.php; do
+        if [ ! -f "$PUBLIC_HTML/$source_file" ] || \
+           ! git -C "$SOURCE_REF_DIR" show "$REQUIRED_2X_VERSION:$source_file" | cmp -s - "$PUBLIC_HTML/$source_file"; then
+            error "Deployed file differs from $REQUIRED_2X_VERSION tag: $source_file"
+            exit 1
+        fi
+    done
+    CURRENT_VERSION="$REQUIRED_2X_VERSION"
+    info "Verified archive-based 2.x deployment against tag $REQUIRED_2X_VERSION"
+else
+    CURRENT_VERSION="$(git -C "$PUBLIC_HTML" describe --tags --exact-match HEAD 2>/dev/null || true)"
 fi
 
 OLD_PHP_BIN="${OS2DISPLAY_2X_PHP_BIN:-}"
@@ -281,7 +315,7 @@ fi
 # is required by Bellcom's MariaDB/MySQL deployment. rc8 also needs an actual
 # Redis client extension because Symfony's Redis provider is built during boot.
 MISSING_V3_EXTENSIONS=()
-for extension in ctype fileinfo gd iconv pdo_mysql; do
+for extension in ctype fileinfo gd iconv pdo_mysql imagick; do
     if ! "$V3_PHP_BIN" -r 'exit(extension_loaded($argv[1]) ? 0 : 1);' "$extension"; then
         MISSING_V3_EXTENSIONS+=("$extension")
     fi
@@ -299,8 +333,6 @@ if ! "$V3_PHP_BIN" -m 2>/dev/null | grep -Eqi '^(redis|relay)$'; then
     exit 1
 fi
 
-CURRENT_VERSION="$(git -C "$PUBLIC_HTML" describe --tags --exact-match HEAD 2>/dev/null || true)"
-
 if [ "$CURRENT_VERSION" != "$REQUIRED_2X_VERSION" ]; then
     error "Expected existing OS2Display API $REQUIRED_2X_VERSION, found '${CURRENT_VERSION:-unknown}'. Upgrade 2.x first."
     exit 1
@@ -312,8 +344,9 @@ printf 'Current API:        %s\n' "$CURRENT_VERSION"
 printf 'Target 3.x:         %s\n' "$TARGET_VERSION"
 printf '2.x PHP:            %s (%s)\n' "$OLD_PHP_BIN" "$($OLD_PHP_BIN -r 'echo PHP_VERSION;')"
 printf '3.x PHP:            %s (%s)\n' "$V3_PHP_BIN" "$V3_PHP_VERSION"
-printf '3.x PHP modules:    ctype fileinfo gd iconv pdo_mysql + redis/relay: OK\n'
+printf '3.x PHP modules:    ctype fileinfo gd iconv pdo_mysql imagick + redis/relay: OK\n'
 printf 'Application URL:    %s\n' "$APP_URL"
+printf 'Application dir:    %s\n' "$PUBLIC_HTML"
 
 # The Bellcom v2 Apache templates use mod_php directives. If this installation
 # still uses that layout, insist that php8.4 is already enabled before cutover.
@@ -561,9 +594,16 @@ printf 'PHP Redis/Relay extension detected; keeping Redis cache/session defaults
 chmod 0600 "$CONFIG_EXPORT"
 
 info "Downloading OS2Display $TARGET_VERSION production artifact"
-ARCHIVE_NAME="display-api-service-$TARGET_VERSION.tar.gz"
-ARCHIVE_URL="https://github.com/os2display/display-api-service/releases/download/$TARGET_VERSION/$ARCHIVE_NAME"
-CHECKSUM_URL="https://github.com/os2display/display-api-service/releases/download/$TARGET_VERSION/checksum.txt"
+# Stable release assets moved to the renamed os2display/os2display repository.
+if [[ "$TARGET_VERSION" == *-rc* ]]; then
+    RELEASE_REPO="os2display/display-api-service"
+    ARCHIVE_NAME="display-api-service-$TARGET_VERSION.tar.gz"
+else
+    RELEASE_REPO="os2display/os2display"
+    ARCHIVE_NAME="os2display-$TARGET_VERSION.tar.gz"
+fi
+ARCHIVE_URL="https://github.com/$RELEASE_REPO/releases/download/$TARGET_VERSION/$ARCHIVE_NAME"
+CHECKSUM_URL="https://github.com/$RELEASE_REPO/releases/download/$TARGET_VERSION/checksum.txt"
 
 wget -q --show-progress -O "$DOWNLOAD_DIR/$ARCHIVE_NAME" "$ARCHIVE_URL"
 wget -q --show-progress -O "$DOWNLOAD_DIR/checksum.txt" "$CHECKSUM_URL"
@@ -636,7 +676,7 @@ info "Backing up installation"
 cp -a "$WEB_ROOT" "$FILE_BACKUP_FOLDER"
 printf 'File backup: %s\n' "$FILE_BACKUP_FOLDER"
 
-STAGE_ROOT="$WEB_ROOT/.public_html-v3-$TIMESTAMP"
+STAGE_ROOT="$WEB_ROOT/.$APP_DIR-v3-$TIMESTAMP"
 if [ -e "$STAGE_ROOT" ]; then
     error "Stage directory already exists: $STAGE_ROOT"
     exit 1
@@ -649,7 +689,7 @@ tar -xzf "$DOWNLOAD_DIR/$ARCHIVE_NAME" -C "$STAGE_ROOT"
 # Symfony Runtime still requires the base file even when .env.local contains
 # all production overrides. Fetch it from the exact same release tag.
 if [ ! -f "$STAGE_ROOT/.env" ]; then
-    ENV_URL="https://raw.githubusercontent.com/os2display/display-api-service/$TARGET_VERSION/.env"
+    ENV_URL="https://raw.githubusercontent.com/$RELEASE_REPO/$TARGET_VERSION/.env"
     if ! wget -q -O "$STAGE_ROOT/.env" "$ENV_URL"; then
         error "Could not download the base .env from $ENV_URL"
         exit 1
@@ -721,7 +761,7 @@ VHOST_PATCHED=1
 apache2ctl configtest
 
 DEPLOYED=0
-OLD_RELEASE_DIR="$WEB_ROOT/public_html.v2-$TIMESTAMP"
+OLD_RELEASE_DIR="$WEB_ROOT/$APP_DIR.v2-$TIMESTAMP"
 
 info "Cutting over to OS2Display $TARGET_VERSION"
 mv "$PUBLIC_HTML" "$OLD_RELEASE_DIR"
