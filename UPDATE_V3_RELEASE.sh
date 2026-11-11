@@ -7,10 +7,9 @@ set -Eeuo pipefail
 umask 077
 
 die() { printf 'ERROR: %s\n' "$*" >&2; return 1; }
-DOMAIN="$1"
-MODE="$2"
-VERSION=3.0.0
-if [ -n "$OS2DISPLAY_VERSION" ]; then VERSION="$OS2DISPLAY_VERSION"; fi
+DOMAIN="${1:-}"
+MODE="${2:---check}"
+VERSION="${OS2DISPLAY_VERSION:-3.0.0}"
 ROOT="/var/www/$DOMAIN"
 LIVE="$ROOT/public_html"
 BACKUP_BASE="/var/www/backup/os2display-v3"
@@ -109,7 +108,7 @@ wget -q --show-progress -O "$TMP/$ARCHIVE" "$BASE/$ARCHIVE"
 wget -q -O "$TMP/checksum.txt" "$BASE/checksum.txt"
 EXPECTED="$(awk 'NF {print $1; exit}' "$TMP/checksum.txt")"
 ACTUAL="$(sha256sum "$TMP/$ARCHIVE" | awk '{print $1}')"
-if ! [[ "$EXPECTED" =~ ^[a-fA-F0-9]{64}$ ]] || [ "$EXPECTED" != "$ACTUAL" ]; then
+if ! [[ "$EXPECTED" =~ ^[a-fA-F0-9]{64}$ ]] || [ "${EXPECTED,,}" != "${ACTUAL,,}" ]; then
     die 'Release SHA256 mismatch'; exit 1
 fi
 # Reject absolute/traversing names and links before extraction.
