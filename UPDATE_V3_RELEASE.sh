@@ -25,7 +25,7 @@ cleanup() {
     if [ -n "$STAGE" ] && [ -d "$STAGE" ] && [ "$SWAPPED" -eq 0 ]; then rm -rf -- "$STAGE"; fi
     if [ "$status" -ne 0 ]; then
         printf 'ERROR: Update interrupted (code %s).\n' "$status" >&2
-        if [ -n "$BACKUP" ]; then printf 'Backups: %s\n' "$BACKUP" >&2; fi
+        if [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; then printf 'Backups: %s\n' "$BACKUP" >&2; fi
         if [ "$SWAPPED" -eq 1 ]; then
             printf 'IMPORTANT: Code was switched. Database migrations may already have run.\n' >&2
             printf 'Do NOT restore only code; evaluate database and code together.\n' >&2
@@ -124,6 +124,17 @@ then die 'Release archive has unsafe paths or links'; exit 1; fi
 
 mkdir -p "$STAGE"
 tar -xzf "$TMP/$ARCHIVE" --no-same-owner -C "$STAGE"
+
+# Upstream's compiled release archive does not ship the root .env file.
+# Fetch the defaults from the exact same Git tag as the verified archive.
+# The existing site's .env.local is preserved separately and takes precedence.
+if [ ! -s "$STAGE/.env" ]; then
+    ENV_URL="https://raw.githubusercontent.com/os2display/os2display/$VERSION/.env"
+    if ! wget -q -O "$STAGE/.env" "$ENV_URL" || [ ! -s "$STAGE/.env" ]; then
+        die "Could not fetch release .env from $ENV_URL"; exit 1
+    fi
+fi
+
 for entry in .env bin/console vendor/autoload.php public/index.php public/release.json public/client/release.json; do
     if [ ! -s "$STAGE/$entry" ]; then die "Missing artifact file: $entry"; exit 1; fi
 done
