@@ -52,7 +52,7 @@ check_web_php_limits() {
         foreach ($limits as $key => $minimum) {
             $value = ini_get($key);
             $ok = $toMb($value) >= $minimum;
-            printf("%s = %s (minimum %dM): %s\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
+            printf("%s = %s (minimum %dM): %s\\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
             if (!$ok) $failed = true;
         }
         if ($toMb(ini_get("post_max_size")) < $toMb(ini_get("upload_max_filesize"))) {
