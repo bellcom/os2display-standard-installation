@@ -3,6 +3,45 @@
 set -Ee -o pipefail
 umask 077
 die(){ printf 'ERROR: %s\n' "$*" >&2; }
+
+# Bellcom web PHP limits. Emulate the selected Apache/FPM INI + conf.d
+# rather than checking CLI defaults. A pool-level FPM override requires review.
+check_web_php_limits() {
+    local sapi="$1" ini="/etc/php/8.4/$1/php.ini" scan="/etc/php/8.4/$1/conf.d"
+    if [ ! -f "$ini" ] || [ ! -d "$scan" ]; then
+        printf 'ERROR: PHP 8.4 %s configuration not found\n' "$sapi" >&2
+        return 1
+    fi
+    PHP_INI_SCAN_DIR="$scan" php8.4 -c "$ini" -r '
+        $limits = ["memory_limit" => 1024, "post_max_size" => 200, "upload_max_filesize" => 200];
+        $toMb = static function ($raw) {
+            $raw = trim((string)$raw);
+            if ($raw === "-1") return INF;
+            if (!preg_match("/^([0-9]+)([KMG]?)$/i", $raw, $m)) return -1;
+            return (float)$m[1] * (["" => 1 / 1048576, "K" => 1 / 1024, "M" => 1, "G" => 1024][strtoupper($m[2])]);
+        };
+        $failed = false;
+        foreach ($limits as $key => $minimum) {
+            $value = ini_get($key);
+            $ok = $toMb($value) >= $minimum;
+            printf("%s = %s (minimum %dM): %s\\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
+            if (!$ok) $failed = true;
+        }
+        if ($toMb(ini_get("post_max_size")) < $toMb(ini_get("upload_max_filesize"))) {
+            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\\n");
+            $failed = true;
+        }
+        if ($failed) exit(1);
+    ' || {
+        printf 'ERROR: Set memory_limit=1024M, post_max_size=200M, upload_max_filesize=200M for PHP 8.4 %s\n' "$sapi" >&2
+        return 1
+    }
+    if [ "$sapi" = fpm ] && grep -REq '^[[:space:]]*php_(admin_)?value\[(memory_limit|post_max_size|upload_max_filesize)\]' /etc/php/8.4/fpm/pool.d 2>/dev/null; then
+        printf 'ERROR: PHP-FPM pool overrides these limits; review pool settings before continuing\n' >&2
+        return 1
+    fi
+}
+
 DOMAIN="$1"
 VERSION="$OS2DISPLAY_VERSION"
 [ -n "$VERSION" ] || VERSION=3.0.0-rc8
@@ -18,6 +57,7 @@ trap cleanup EXIT
 for c in apache2ctl a2ensite curl mysql openssl php8.4 redis-cli sha256sum sudo systemctl tar wget; do command -v "$c" >/dev/null || { die "Missing: $c"; exit 1; }; done
 [ ! -e "$ROOT" ] && [ ! -e "$VHOST" ] || { die 'Site or vhost already exists'; exit 1; }
 # Apache serves Symfony through PHP-FPM 8.4; mod_php is neither needed nor supported here.
+check_web_php_limits fpm || { die 'PHP-FPM 8.4 web upload/memory limits below Bellcom minimum'; exit 1; }
 [ -S /run/php/php8.4-fpm.sock ] || { die 'PHP-FPM 8.4 socket missing: /run/php/php8.4-fpm.sock'; exit 1; }
 systemctl is-active --quiet php8.4-fpm || { die 'PHP-FPM 8.4 service not running'; exit 1; }
 apache2ctl -M 2>/dev/null | grep -q proxy_fcgi_module || { die 'Apache mod_proxy_fcgi missing (a2enmod proxy_fcgi)'; exit 1; }
