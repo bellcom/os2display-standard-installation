@@ -24,11 +24,11 @@ check_web_php_limits() {
         foreach ($limits as $key => $minimum) {
             $value = ini_get($key);
             $ok = $toMb($value) >= $minimum;
-            printf("%s = %s (minimum %dM): %s\\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
+            printf("%s = %s (minimum %dM): %s\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
             if (!$ok) $failed = true;
         }
         if ($toMb(ini_get("post_max_size")) < $toMb(ini_get("upload_max_filesize"))) {
-            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\\n");
+            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\n");
             $failed = true;
         }
         if ($failed) exit(1);
@@ -43,8 +43,7 @@ check_web_php_limits() {
 }
 
 DOMAIN="$1"
-VERSION="$OS2DISPLAY_VERSION"
-[ -n "$VERSION" ] || VERSION=3.0.0-rc8
+VERSION="${OS2DISPLAY_VERSION:-3.0.0}"
 [ "$EUID" -eq 0 ] || { die 'Run as root'; exit 1; }
 [[ "$DOMAIN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ && "$DOMAIN" == *.* && "$DOMAIN" != *..* ]] || { die 'Invalid domain'; exit 1; }
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { die 'Invalid version'; exit 1; }
@@ -62,13 +61,19 @@ check_web_php_limits fpm || { die 'PHP-FPM 8.4 web upload/memory limits below Be
 systemctl is-active --quiet php8.4-fpm || { die 'PHP-FPM 8.4 service not running'; exit 1; }
 apache2ctl -M 2>/dev/null | grep -q proxy_fcgi_module || { die 'Apache mod_proxy_fcgi missing (a2enmod proxy_fcgi)'; exit 1; }
 apache2ctl -M 2>/dev/null | grep -q rewrite_module || { die 'mod_rewrite missing'; exit 1; }
-php8.4 -r 'if(PHP_VERSION_ID<80400)exit(1);foreach(["ctype","fileinfo","gd","iconv","pdo_mysql","redis"] as $m){if(!extension_loaded($m)){fwrite(STDERR,"Missing $m\n");exit(1);}}' || { die 'PHP preflight failed'; exit 1; }
+php8.4 -r 'if(PHP_VERSION_ID<80400)exit(1);foreach(["ctype","fileinfo","gd","iconv","pdo_mysql","redis","imagick"] as $m){if(!extension_loaded($m)){fwrite(STDERR,"Missing $m\n");exit(1);}}' || { die 'PHP preflight failed'; exit 1; }
 [ "$(redis-cli ping 2>/dev/null)" = PONG ] || { die 'Redis unavailable'; exit 1; }
 mysql -NBe 'SELECT 1' >/dev/null || { die 'MariaDB root access unavailable'; exit 1; }
 apache2ctl configtest
 TMP="$(mktemp -d /tmp/bcdisplay-v3.XXXXXXXX)"
-ARCHIVE="display-api-service-$VERSION.tar.gz"
-BASE="https://github.com/os2display/display-api-service/releases/download/$VERSION"
+if [[ "$VERSION" == *-rc* ]]; then
+    RELEASE_REPO="os2display/display-api-service"
+    ARCHIVE="display-api-service-$VERSION.tar.gz"
+else
+    RELEASE_REPO="os2display/os2display"
+    ARCHIVE="os2display-$VERSION.tar.gz"
+fi
+BASE="https://github.com/$RELEASE_REPO/releases/download/$VERSION"
 wget -q --show-progress -O "$TMP/$ARCHIVE" "$BASE/$ARCHIVE"
 wget -q -O "$TMP/checksum.txt" "$BASE/checksum.txt"
 EXPECTED="$(awk -v a="$ARCHIVE" '$0 ~ a"$" {print $1;exit}' "$TMP/checksum.txt")"
@@ -78,7 +83,7 @@ ACTUAL="$(sha256sum "$TMP/$ARCHIVE" | awk '{print $1}')"
 tar -tzf "$TMP/$ARCHIVE" | awk '/^\// || /(^|\/)\.\.($|\/)/ {bad=1} END{exit bad?1:0}' || { die 'Unsafe tar paths'; exit 1; }
 mkdir "$TMP/stage"
 tar -xzf "$TMP/$ARCHIVE" --no-same-owner -C "$TMP/stage"
-[ -s "$TMP/stage/.env" ] || wget -q -O "$TMP/stage/.env" "https://raw.githubusercontent.com/os2display/display-api-service/$VERSION/.env"
+[ -s "$TMP/stage/.env" ] || wget -q -O "$TMP/stage/.env" "https://raw.githubusercontent.com/$RELEASE_REPO/$VERSION/.env"
 for f in .env bin/console vendor/autoload.php public/index.php public/release.json public/client/release.json public/client/online-check/index.html; do [ -s "$TMP/stage/$f" ] || { die "Missing artifact file: $f"; exit 1; }; done
 printf 'Domain %s, release %s, path %s\n' "$DOMAIN" "$VERSION" "$APP"
 read -r -p 'Create new database, app and Apache vhost? [y/N] ' yes
@@ -122,6 +127,12 @@ sudo -u www-data php8.4 bin/console lexik:jwt:generate-keypair --skip-if-exists 
 sudo -u www-data php8.4 bin/console about --env=prod
 sudo -u www-data php8.4 bin/console doctrine:query:sql 'SELECT 1' --no-interaction
 sudo -u www-data php8.4 bin/console app:update --no-interaction
+# The noninteractive updater only updates already installed content.
+# Install the complete bundled 3.x catalog on a fresh deployment.
+sudo -u www-data php8.4 bin/console app:templates:install --all --no-interaction
+sudo -u www-data php8.4 bin/console app:screen-layouts:install --all --no-interaction
+sudo -u www-data php8.4 bin/console app:templates:list
+sudo -u www-data php8.4 bin/console app:screen-layouts:list
 sudo -u www-data php8.4 bin/console cache:clear --env=prod --no-debug
 )
 cat > "$VHOST" <<EOF
@@ -160,3 +171,20 @@ for path in /release.json /client/release.json /client/ /client/online-check/ /c
 done
 printf 'Installed %s in %s\n' "$VERSION" "$APP"
 echo 'Next: verify HTTPS on the reverse proxy, then use app:tenant:add and app:user:add as www-data with php8.4.'
+# Feed sources are tenant-specific; create a tenant first.
+# Keep feed setup interactive; an arbitrary RSS feed must never be created.
+if [ -t 0 ]; then
+ read -r -p 'Create the initial tenant now? [y/N] ' CREATE_TENANT
+ if [[ "$CREATE_TENANT" =~ ^[Yy]$ ]]; then
+   (cd "$APP" && sudo -u www-data php8.4 bin/console app:tenant:add) || {
+       die 'Tenant creation failed; feed creation skipped'; exit 1;
+   }
+ fi
+ read -r -p 'Configure a feed source for an existing tenant now? [y/N] ' CREATE_FEED
+ if [[ "$CREATE_FEED" =~ ^[Yy]$ ]]; then
+   (cd "$APP" && sudo -u www-data php8.4 bin/console app:feed:create-feed-source) || {
+       die 'Interactive feed creation failed'; exit 1;
+   }
+ fi
+fi
+echo 'Feed sources can also be created later in Admin > Datakilder or with app:feed:create-feed-source.'
