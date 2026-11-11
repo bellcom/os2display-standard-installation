@@ -265,10 +265,22 @@ if [ ! -d "$PUBLIC_HTML/.git" ]; then
         error "2.x archive has no .git: set OS2DISPLAY_SOURCE_REF_DIR to a preserved checkout containing the $REQUIRED_2X_VERSION tag"
         exit 1
     fi
-    for source_file in composer.json composer.lock src/Command/Utils/ConvertEnvTo3xCommand.php migrations/Version20260507120000.php; do
-        if [ ! -f "$PUBLIC_HTML/$source_file" ] || \
-           ! git -C "$SOURCE_REF_DIR" show "$REQUIRED_2X_VERSION:$source_file" | cmp -s - "$PUBLIC_HTML/$source_file"; then
-            error "Deployed file differs from $REQUIRED_2X_VERSION tag: $source_file"
+    # Git safety is scoped to this single preserved checkout; do not change
+    # system/global safe.directory configuration.
+    if ! git -c safe.directory="$SOURCE_REF_DIR" -C "$SOURCE_REF_DIR" rev-parse --verify "refs/tags/$REQUIRED_2X_VERSION^{commit}" >/dev/null; then
+        error "Tag $REQUIRED_2X_VERSION is missing or unreadable in $SOURCE_REF_DIR"
+        exit 1
+    fi
+    # composer config allow-plugins.symfony/runtime modifies composer.json
+    # during installation, without changing its locked dependencies. Verify
+    # composer.lock plus the migration and converter code against the tag.
+    for source_file in composer.lock src/Command/Utils/ConvertEnvTo3xCommand.php migrations/Version20260507120000.php; do
+        if [ ! -f "$PUBLIC_HTML/$source_file" ]; then
+            error "Deployed 2.x file missing: $source_file"
+            exit 1
+        fi
+        if ! git -c safe.directory="$SOURCE_REF_DIR" -C "$SOURCE_REF_DIR" show "$REQUIRED_2X_VERSION:$source_file" | cmp -s - "$PUBLIC_HTML/$source_file"; then
+            error "Deployed 2.x file differs from tag $REQUIRED_2X_VERSION: $source_file"
             exit 1
         fi
     done
