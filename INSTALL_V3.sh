@@ -24,11 +24,11 @@ check_web_php_limits() {
         foreach ($limits as $key => $minimum) {
             $value = ini_get($key);
             $ok = $toMb($value) >= $minimum;
-            printf("%s = %s (minimum %dM): %s\\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
+            printf("%s = %s (minimum %dM): %s\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
             if (!$ok) $failed = true;
         }
         if ($toMb(ini_get("post_max_size")) < $toMb(ini_get("upload_max_filesize"))) {
-            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\\n");
+            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\n");
             $failed = true;
         }
         if ($failed) exit(1);
@@ -171,12 +171,20 @@ for path in /release.json /client/release.json /client/ /client/online-check/ /c
 done
 printf 'Installed %s in %s\n' "$VERSION" "$APP"
 echo 'Next: verify HTTPS on the reverse proxy, then use app:tenant:add and app:user:add as www-data with php8.4.'
-# Feed sources are tenant-specific and require operator-supplied settings.
-# Do not create dummy RSS/Rejseplanen feed sources without tenant context.
+# Feed sources are tenant-specific; create a tenant first.
+# Keep feed setup interactive; an arbitrary RSS feed must never be created.
 if [ -t 0 ]; then
- read -r -p 'Already created a tenant and want to configure a feed source now? [y/N] ' CREATE_FEED
+ read -r -p 'Create the initial tenant now? [y/N] ' CREATE_TENANT
+ if [[ "$CREATE_TENANT" =~ ^[Yy]$ ]]; then
+   (cd "$APP" && sudo -u www-data php8.4 bin/console app:tenant:add) || {
+       die 'Tenant creation failed; feed creation skipped'; exit 1;
+   }
+ fi
+ read -r -p 'Configure a feed source for an existing tenant now? [y/N] ' CREATE_FEED
  if [[ "$CREATE_FEED" =~ ^[Yy]$ ]]; then
-   (cd "$APP" && sudo -u www-data php8.4 bin/console app:feed:create-feed-source)
+   (cd "$APP" && sudo -u www-data php8.4 bin/console app:feed:create-feed-source) || {
+       die 'Interactive feed creation failed'; exit 1;
+   }
  fi
 fi
-echo 'You can later create a feed source from the admin interface or with app:feed:create-feed-source.'
+echo 'Feed sources can also be created later in Admin > Datakilder or with app:feed:create-feed-source.'
