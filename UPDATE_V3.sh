@@ -52,11 +52,11 @@ check_web_php_limits() {
         foreach ($limits as $key => $minimum) {
             $value = ini_get($key);
             $ok = $toMb($value) >= $minimum;
-            printf("%s = %s (minimum %dM): %s\\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
+            printf("%s = %s (minimum %dM): %s\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
             if (!$ok) $failed = true;
         }
         if ($toMb(ini_get("post_max_size")) < $toMb(ini_get("upload_max_filesize"))) {
-            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\\n");
+            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\n");
             $failed = true;
         }
         if ($failed) exit(1);
@@ -906,11 +906,20 @@ done
 
 # Then verify the public path through the reverse proxy. /client/ is important:
 # /client/release.json can work while the actual client route is broken.
+# On Bellcom installations /admin/ may intentionally be restricted by the
+# reverse proxy. A 403 is expected only if the same path works locally.
 for path in /release.json /client/release.json /client/ /client/online-check/ /config/admin /config/client /admin; do
-    if curl --fail --silent --show-error --location --max-time 20 "$APP_URL$path" >/dev/null; then
+    public_status="$(curl --silent --show-error --location --max-time 20 \
+        --output /dev/null --write-out '%{http_code}' "$APP_URL$path")" && curl_ok=1 || curl_ok=0
+    if [ "$curl_ok" -eq 1 ] && [[ "$public_status" =~ ^2[0-9][0-9]$ ]]; then
         printf 'OK public: %s\n' "$APP_URL$path"
+    elif [ "$path" = /admin ] && [ "$curl_ok" -eq 1 ] && [ "$public_status" = 403 ] && \
+         curl --fail --silent --show-error --max-time 20 -H "Host: $DOMAIN" \
+             http://127.0.0.1/admin/ >/dev/null; then
+        printf 'INFO public: %s/admin/ returns HTTP 403 (reverse-proxy IP restriction; backend OK).\n' "$APP_URL"
     else
-        printf 'WARNING public: %s failed. Check reverse-proxy access rules and logs.\n' "$APP_URL$path" >&2
+        printf 'WARNING public: %s failed (HTTP %s). Check reverse-proxy access rules and logs.\n' \
+            "$APP_URL$path" "$public_status" >&2
     fi
 done
 
