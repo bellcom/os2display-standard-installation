@@ -34,7 +34,7 @@ for v in 8.3 8.4; do
     "php$v" -r 'echo PHP_VERSION, PHP_EOL;'
     "php$v" -r '
       foreach (["ctype","fileinfo","gd","iconv","pdo_mysql","redis","imagick","intl","mbstring","zip"] as $x) {
-        printf("  %-12s %s\\n", $x, extension_loaded($x) ? "OK" : "MANGLER");
+        printf("  %-12s %s\n", $x, extension_loaded($x) ? "OK" : "MANGLER");
       }'
   else printf 'PHP %s: MANGLER\n' "$v"; fi
 done
@@ -60,7 +60,7 @@ for sapi in apache2 fpm; do
       foreach (["memory_limit"=>1024,"post_max_size"=>200,"upload_max_filesize"=>200] as $k=>$min) {
         $v=ini_get($k);$u=strtoupper(substr($v,-1));$n=(float)$v;
         $mb=($v==="-1")?INF:($u==="G"?$n*1024:($u==="M"?$n:($u==="K"?$n/1024:$n/1048576)));
-        printf("  %s=%s (Bellcom min %dM): %s\\n",$k,$v,$min,$mb>=$min?"OK":"FOR LAV");
+        printf("  %s=%s (Bellcom min %dM): %s\n",$k,$v,$min,$mb>=$min?"OK":"FOR LAV");
       }'
   fi
 done
