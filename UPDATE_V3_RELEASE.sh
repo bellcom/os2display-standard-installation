@@ -7,6 +7,45 @@ set -Eeuo pipefail
 umask 077
 
 die() { printf 'ERROR: %s\n' "$*" >&2; return 1; }
+
+# Bellcom web PHP limits. Emulate the selected Apache/FPM INI + conf.d
+# rather than checking CLI defaults. A pool-level FPM override requires review.
+check_web_php_limits() {
+    local sapi="$1" ini="/etc/php/8.4/$1/php.ini" scan="/etc/php/8.4/$1/conf.d"
+    if [ ! -f "$ini" ] || [ ! -d "$scan" ]; then
+        printf 'ERROR: PHP 8.4 %s configuration not found\n' "$sapi" >&2
+        return 1
+    fi
+    PHP_INI_SCAN_DIR="$scan" php8.4 -c "$ini" -r '
+        $limits = ["memory_limit" => 1024, "post_max_size" => 200, "upload_max_filesize" => 200];
+        $toMb = static function ($raw) {
+            $raw = trim((string)$raw);
+            if ($raw === "-1") return INF;
+            if (!preg_match("/^([0-9]+)([KMG]?)$/i", $raw, $m)) return -1;
+            return (float)$m[1] * (["" => 1 / 1048576, "K" => 1 / 1024, "M" => 1, "G" => 1024][strtoupper($m[2])]);
+        };
+        $failed = false;
+        foreach ($limits as $key => $minimum) {
+            $value = ini_get($key);
+            $ok = $toMb($value) >= $minimum;
+            printf("%s = %s (minimum %dM): %s\\n", $key, $value, $minimum, $ok ? "OK" : "FAIL");
+            if (!$ok) $failed = true;
+        }
+        if ($toMb(ini_get("post_max_size")) < $toMb(ini_get("upload_max_filesize"))) {
+            fwrite(STDERR, "ERROR: post_max_size must be >= upload_max_filesize\\n");
+            $failed = true;
+        }
+        if ($failed) exit(1);
+    ' || {
+        printf 'ERROR: Set memory_limit=1024M, post_max_size=200M, upload_max_filesize=200M for PHP 8.4 %s\n' "$sapi" >&2
+        return 1
+    }
+    if [ "$sapi" = fpm ] && grep -REq '^[[:space:]]*php_(admin_)?value\[(memory_limit|post_max_size|upload_max_filesize)\]' /etc/php/8.4/fpm/pool.d 2>/dev/null; then
+        printf 'ERROR: PHP-FPM pool overrides these limits; review pool settings before continuing\n' >&2
+        return 1
+    fi
+}
+
 DOMAIN="${1:-}"
 MODE="${2:---check}"
 VERSION="${OS2DISPLAY_VERSION:-3.0.0}"
@@ -59,6 +98,11 @@ for ext in ctype fileinfo gd iconv pdo_mysql redis imagick; do
         die "Missing PHP 8.4 extension: $ext"; exit 1
     fi
 done
+if [ -e /etc/apache2/mods-enabled/php8.4.load ]; then
+    check_web_php_limits apache2 || { die 'PHP 8.4 Apache web upload/memory limits too low'; exit 1; }
+else
+    check_web_php_limits fpm || { die 'PHP-FPM 8.4 web upload/memory limits too low'; exit 1; }
+fi
 if ! apache2ctl configtest; then die 'Apache configtest failed'; exit 1; fi
 if ! sudo -u www-data test -r "$LIVE/bin/console"; then die 'www-data cannot read bin/console'; exit 1; fi
 if ! (cd "$LIVE" && sudo -u www-data php8.4 bin/console about --env=prod >/dev/null); then
