@@ -19,7 +19,7 @@ IFS=$'\n\t'
 # -----------------------------------------------------------------------------
 
 TARGET_VERSION="${OS2DISPLAY_VERSION:-3.0.0}"
-REQUIRED_2X_VERSION="${OS2DISPLAY_REQUIRED_2X_VERSION:-2.8.1}"
+REQUIRED_2X_VERSION="${OS2DISPLAY_REQUIRED_2X_VERSION:-}"
 REMOVE_DEPRECATED_FEEDS="${OS2DISPLAY_REMOVE_DEPRECATED_FEEDS:-0}"
 DOMAIN="${1:-}"
 
@@ -296,6 +296,7 @@ if [ ! -d "$PUBLIC_HTML" ]; then
 fi
 
 if [ ! -d "$PUBLIC_HTML/.git" ]; then
+    REQUIRED_2X_VERSION="${REQUIRED_2X_VERSION:-2.8.1}"
     # Installations from a 2.8.1 git archive have no Git metadata.
     # Validate the deployed code against that tag in the preserved old
     # checkout rather than accepting an unverified version override.
@@ -326,7 +327,8 @@ if [ ! -d "$PUBLIC_HTML/.git" ]; then
     CURRENT_VERSION="$REQUIRED_2X_VERSION"
     info "Verified archive-based 2.x deployment against tag $REQUIRED_2X_VERSION"
 else
-    CURRENT_VERSION="$(git -C "$PUBLIC_HTML" describe --tags --exact-match HEAD 2>/dev/null || true)"
+    CURRENT_VERSION="$(git -c safe.directory="$PUBLIC_HTML" -C "$PUBLIC_HTML" describe --tags --exact-match HEAD 2>/dev/null || true)"
+    REQUIRED_2X_VERSION="${REQUIRED_2X_VERSION:-$CURRENT_VERSION}"
 fi
 
 OLD_PHP_BIN="${OS2DISPLAY_2X_PHP_BIN:-}"
@@ -381,6 +383,11 @@ fi
 if ! "$V3_PHP_BIN" -m 2>/dev/null | grep -Eqi '^(redis|relay)$'; then
     error "PHP $V3_PHP_VERSION needs the redis or relay extension for OS2Display $TARGET_VERSION"
     printf 'For Debian/Sury PHP 8.4, install php8.4-redis before running this updater.\n' >&2
+    exit 1
+fi
+
+if [ "$REQUIRED_2X_VERSION" != "2.8.1" ] && [ "$REQUIRED_2X_VERSION" != "2.8.2" ]; then
+    error "Unsupported 2.x source version: ${REQUIRED_2X_VERSION:-unknown}. Expected 2.8.1 or 2.8.2."
     exit 1
 fi
 
@@ -494,8 +501,17 @@ sudo -u www-data "$OLD_PHP_BIN" bin/console app:utils:convert-env-to-3x \
     --output=env \
     --skip-config-json > "$CONFIG_EXPORT"
 
-ADMIN_CONFIG_JSON="$PUBLIC_HTML/admin/config.json"
-CLIENT_CONFIG_JSON="$PUBLIC_HTML/client/config.json"
+# Support both historic locations without modifying the V2 tree.
+if [ -f "$PUBLIC_HTML/admin/config.json" ]; then
+    ADMIN_CONFIG_JSON="$PUBLIC_HTML/admin/config.json"
+else
+    ADMIN_CONFIG_JSON="$PUBLIC_HTML/public/admin/config.json"
+fi
+if [ -f "$PUBLIC_HTML/client/config.json" ]; then
+    CLIENT_CONFIG_JSON="$PUBLIC_HTML/client/config.json"
+else
+    CLIENT_CONFIG_JSON="$PUBLIC_HTML/public/client/config.json"
+fi
 
 if [ ! -f "$ADMIN_CONFIG_JSON" ]; then
     error "Existing admin config.json is missing: $ADMIN_CONFIG_JSON"
@@ -813,6 +829,18 @@ if missing:
         output.write("\n".join(missing) + "\n")
 
 print(f"Included {len(missing)} missing 3.x default variables; existing overrides unchanged.")
+
+# Tracking and admin display are independent settings.
+# Report their exported values without changing either value.
+values = {}
+for line in target.read_text().splitlines():
+    name = variable_name(line)
+    if name in ("TRACK_SCREEN_INFO", "ADMIN_SHOW_SCREEN_STATUS"):
+        values[name] = line.split("=", 1)[1].strip().strip(chr(34) + chr(39)).lower()
+for key in ("TRACK_SCREEN_INFO", "ADMIN_SHOW_SCREEN_STATUS"):
+    print(f"{key}={values.get(key, '(not set)')}")
+if values.get("TRACK_SCREEN_INFO") == "true" and values.get("ADMIN_SHOW_SCREEN_STATUS") != "true":
+    print("WARNING: Screen tracking enabled but admin status column disabled.")
 DEFAULTENVPY
 
 install -o root -g www-data -m 0640 "$CONFIG_EXPORT" "$STAGE_ROOT/.env.local"
