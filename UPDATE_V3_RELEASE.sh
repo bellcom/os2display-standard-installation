@@ -89,7 +89,7 @@ if [ ! -s "$LIVE/public/release.json" ] || [ ! -s "$LIVE/.env.local" ] ||
    [ ! -d "$LIVE/config/jwt" ] || [ ! -d "$LIVE/public/media" ]; then
     die "Missing existing V3 release tree/config/JWT/media in $LIVE"; exit 1
 fi
-CURRENT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get(\"releaseVersion\",\"\"))' "$LIVE/public/release.json")"
+CURRENT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("releaseVersion",""))' "$LIVE/public/release.json")"
 if [ "$CURRENT" != "3.0.0-rc8" ]; then die "Expected 3.0.0-rc8, found: $CURRENT"; exit 1; fi
 if [ "$CURRENT" = "$VERSION" ]; then die "Already running $VERSION"; exit 1; fi
 
