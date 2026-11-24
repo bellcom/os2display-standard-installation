@@ -283,6 +283,9 @@ if [ ! -d "$WEB_ROOT" ]; then
     exit 1
 fi
 WEB_ROOT="$(realpath -e "$WEB_ROOT")"
+if [ -z "${OS2DISPLAY_APP_DIR:-}" ] && [ -L "$WEB_ROOT/public_html" ] && [ "$(realpath -e "$WEB_ROOT/public_html")" = "$WEB_ROOT/public" ] && [ -f "$WEB_ROOT/public/bin/console" ] && [ ! -L "$WEB_ROOT/public" ]; then
+    APP_DIR=public
+fi
 PUBLIC_HTML="$WEB_ROOT/$APP_DIR"
 if [ -L "$PUBLIC_HTML" ]; then
     error "The application directory must not be a symlink: $PUBLIC_HTML"
@@ -331,10 +334,16 @@ else
     REQUIRED_2X_VERSION="${REQUIRED_2X_VERSION:-$CURRENT_VERSION}"
 fi
 
+if [ "$CURRENT_VERSION" != 2.8.1 ] && [ "$CURRENT_VERSION" != 2.8.2 ]; then
+    error "Upgrade API to 2.8.1 or 2.8.2 first"; exit 1
+fi
 OLD_PHP_BIN="${OS2DISPLAY_2X_PHP_BIN:-}"
 if [ -z "$OLD_PHP_BIN" ]; then
     OLD_PHP_BIN="$(command -v php || true)"
 fi
+
+source "$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")/scripts/lib/php-packages.sh"
+bc_prepare_php84 || exit 1
 
 V3_PHP_BIN="${OS2DISPLAY_V3_PHP_BIN:-}"
 if [ -z "$V3_PHP_BIN" ]; then
@@ -936,6 +945,9 @@ done
 # /client/release.json can work while the actual client route is broken.
 # On Bellcom installations /admin/ may intentionally be restricted by the
 # reverse proxy. A 403 is expected only if the same path works locally.
+if getent ahosts "$DOMAIN" | awk '$1 ~ /^127\./ || $1 == "::1" { found=1 } END { exit !found }'; then
+    printf 'WARNING: Local loopback DNS/hosts mapping for %s; verify public HTTPS from an external workstation.\n' "$DOMAIN" >&2
+else
 for path in /release.json /client/release.json /client/ /client/online-check/ /config/admin /config/client /admin; do
     public_status="$(curl --silent --show-error --location --max-time 20 \
         --output /dev/null --write-out '%{http_code}' "$APP_URL$path")" && curl_ok=1 || curl_ok=0
@@ -950,6 +962,7 @@ for path in /release.json /client/release.json /client/ /client/online-check/ /c
             "$APP_URL$path" "$public_status" >&2
     fi
 done
+fi
 
 printf '\nOS2Display 3.x upgrade completed for %s\n' "$DOMAIN"
 printf 'Version:          %s\n' "$TARGET_VERSION"
