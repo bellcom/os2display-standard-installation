@@ -751,6 +751,8 @@ else
     error "Database backup failed"
     exit 1
 fi
+[ -s "$DB_BACKUP_FILE" ] || { error "Empty database backup"; exit 1; }
+chmod 0600 "$DB_BACKUP_FILE"
 printf 'Database backup: %s\n' "$DB_BACKUP_FILE"
 
 info "Backing up installation"
@@ -879,7 +881,7 @@ printf 'OK: staged 3.x application can connect to the database.\n'
 # Prepare Apache config. The live Apache workers still use the already-loaded
 # v2 config until the reload after cutover.
 VHOST_BACKUPS=()
-VHOST_PATCHED=0
+VHOST_PATCHED=1
 for vhost in "${APACHE_VHOSTS[@]}"; do
     patch_vhost_for_v3 "$vhost"
 done
@@ -892,7 +894,10 @@ OLD_RELEASE_DIR="$WEB_ROOT/$APP_DIR.v2-$TIMESTAMP"
 
 info "Cutting over to OS2Display $TARGET_VERSION"
 mv "$PUBLIC_HTML" "$OLD_RELEASE_DIR"
-mv "$STAGE_ROOT" "$PUBLIC_HTML"
+if ! mv "$STAGE_ROOT" "$PUBLIC_HTML"; then
+    mv "$OLD_RELEASE_DIR" "$PUBLIC_HTML" || printf "CRITICAL: Restore application directory manually\n" >&2
+    false
+fi
 DEPLOYED=1
 
 cd "$PUBLIC_HTML"
