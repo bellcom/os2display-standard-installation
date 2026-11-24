@@ -40,7 +40,11 @@ for v in 8.3 8.4; do
 done
 printf '\n=== APACHE ===\n'
 if [ -x /usr/sbin/apache2ctl ]; then
-  /usr/sbin/apache2ctl configtest 2>&1 || true
+  if [ "$EUID" -eq 0 ]; then
+    /usr/sbin/apache2ctl configtest 2>&1 || true
+  else
+    printf "Apache configtest skipped without root (TLS private files may be unreadable). Run sudo apache2ctl configtest.\n"
+  fi
   /usr/sbin/apache2ctl -S 2>&1 | grep -F "$DOMAIN" || true
 else printf 'Apachectl ikke tilgængelig\n'; fi
 for p in /etc/apache2/mods-enabled/php*.load; do
