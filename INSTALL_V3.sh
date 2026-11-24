@@ -53,8 +53,10 @@ VHOST="/etc/apache2/sites-available/$DOMAIN.conf"
 TMP=''
 cleanup(){ rc=$?; [ -z "$TMP" ] || rm -rf -- "$TMP"; [ "$rc" -eq 0 ] || die "Stopped ($rc); inspect partial site and database before retrying."; }
 trap cleanup EXIT
-for c in apache2ctl a2ensite curl mysql openssl php8.4 redis-cli sha256sum sudo systemctl tar wget; do command -v "$c" >/dev/null || { die "Missing: $c"; exit 1; }; done
+for c in apache2ctl a2ensite curl mysql openssl redis-cli sha256sum sudo systemctl tar wget; do command -v "$c" >/dev/null || { die "Missing: $c"; exit 1; }; done
 [ ! -e "$ROOT" ] && [ ! -e "$VHOST" ] || { die 'Site or vhost already exists'; exit 1; }
+source "$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")/scripts/lib/php-packages.sh"
+bc_prepare_php84 || exit 1
 # Apache serves Symfony through PHP-FPM 8.4; mod_php is neither needed nor supported here.
 check_web_php_limits fpm || { die 'PHP-FPM 8.4 web upload/memory limits below Bellcom minimum'; exit 1; }
 [ -S /run/php/php8.4-fpm.sock ] || { die 'PHP-FPM 8.4 socket missing: /run/php/php8.4-fpm.sock'; exit 1; }

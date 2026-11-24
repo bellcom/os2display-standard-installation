@@ -31,7 +31,7 @@ apt-get install -y \
     composer zip unzip \
     php8.4-cli php8.4-common php8.4-mbstring php8.4-intl php8.4-gd \
     php8.4-xml php8.4-curl php8.4-mysql php8.4-redis php8.4-opcache \
-    php8.4-fpm
+    php8.4-fpm php8.4-imagick php8.4-zip php8.4-bcmath
 
 # Do not purge previous PHP runtimes or change the system-wide PHP alternative.
 a2enmod rewrite proxy_fcgi setenvif
