@@ -374,7 +374,8 @@ rm -f migrations/Version20240221142818.php
 rm -f migrations/Version20240225055224.php
 rm -f migrations/Version20240403043527.php
 
-chown -R www-data:www-data "$PUBLIC_HTML"
+chown -R www-data:www-data "$(realpath -e "$PUBLIC_HTML")"
+sudo -u www-data test -w "$PUBLIC_HTML/composer.json" || { error "Composer manifest is not writable"; exit 1; }
 
 # -------------------------------------------------------------------
 # Composer / Redis
