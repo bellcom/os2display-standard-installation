@@ -1,0 +1,14 @@
+name: OS2Display shell syntax
+on:
+  push:
+  pull_request:
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell scripts
+        run: |
+          for script in INSTALL_V3.sh UPDATE.sh UPDATE_V3.sh UPDATE_V3_RELEASE.sh PREFLIGHT.sh scripts/setup.sh scripts/lib/php-packages.sh; do
+            bash -n "$script" || exit 1
+          done
