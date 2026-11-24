@@ -81,7 +81,7 @@ if ! [[ "$DOMAIN" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ && "$DOMAIN" == *.* 
 fi
 if ! [[ "$VERSION" =~ ^3\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then die 'Only explicit 3.x release tags supported'; exit 1; fi
 
-for cmd in php8.4 sudo tar sha256sum wget curl apache2ctl mysqldump mysql python3; do
+for cmd in sudo tar sha256sum wget curl apache2ctl mysqldump mysql python3; do
     if ! command -v "$cmd" >/dev/null; then die "Missing tool: $cmd"; exit 1; fi
 done
 if [ ! -s "$LIVE/public/release.json" ] || [ ! -s "$LIVE/.env.local" ] ||
@@ -93,6 +93,10 @@ CURRENT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("r
 if [ "$CURRENT" != "3.0.0-rc8" ]; then die "Expected 3.0.0-rc8, found: $CURRENT"; exit 1; fi
 if [ "$CURRENT" = "$VERSION" ]; then die "Already running $VERSION"; exit 1; fi
 
+if [ "$MODE" = --apply ]; then
+    source "$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")/scripts/lib/php-packages.sh"
+    bc_prepare_php84 || exit 1
+fi
 for ext in ctype fileinfo gd iconv pdo_mysql redis imagick; do
     if ! php8.4 -r 'exit(extension_loaded($argv[1]) ? 0 : 1);' "$ext"; then
         die "Missing PHP 8.4 extension: $ext"; exit 1
