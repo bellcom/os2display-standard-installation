@@ -282,10 +282,11 @@ printf "\nBacking up document root...\n"
 
 # Preserve full application and uploads, but not volatile Apache log files
 # or failed V3 staging trees that would fill the filesystem.
-tar -C "$(dirname "$WEB_ROOT")" \
-    --exclude="$DOMAIN/logs/*.log" \
-    --exclude="$DOMAIN/.public-v3-*" \
-    -cf - "$DOMAIN" | tar -C "$BACKUP_FOLDER" -xf -
+mkdir -p "$FILE_BACKUP_FOLDER"
+tar -C "$WEB_ROOT" \
+    --exclude='./logs/*.log' \
+    --exclude='./.public-v3-*' \
+    -cf - . | tar -C "$FILE_BACKUP_FOLDER" -xf -
 if [ ! -f "$FILE_BACKUP_FOLDER/public_html/bin/console" ]; then
     error "Application missing from installation backup"
     exit 1

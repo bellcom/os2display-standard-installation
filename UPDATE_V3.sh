@@ -762,10 +762,11 @@ info "Backing up installation"
 # Keep the logs/ directory itself so an Apache vhost expecting it still works
 # after a restore, but exclude its volatile *.log contents.
 # GNU tar preserves ownership, modes, symlinks and dotfiles in the backup.
-tar -C "$(dirname "$WEB_ROOT")" \
-    --exclude="$DOMAIN/logs/*.log" \
-    --exclude="$DOMAIN/.${APP_DIR}-v3-*" \
-    -cf - "$DOMAIN" | tar -C "$BACKUP_FOLDER" -xf -
+mkdir -p "$FILE_BACKUP_FOLDER"
+tar -C "$WEB_ROOT" \
+    --exclude='./logs/*.log' \
+    --exclude="./.${APP_DIR}-v3-*" \
+    -cf - . | tar -C "$FILE_BACKUP_FOLDER" -xf -
 test -d "$FILE_BACKUP_FOLDER" || { error "Installation backup missing"; exit 1; }
 test -f "$FILE_BACKUP_FOLDER/$APP_DIR/bin/console" || { error "Application missing from installation backup"; exit 1; }
 printf 'File backup (volatile Apache logs and old staging excluded): %s\n' "$FILE_BACKUP_FOLDER"
