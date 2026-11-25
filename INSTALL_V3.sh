@@ -131,8 +131,8 @@ sudo -u www-data php8.4 bin/console doctrine:query:sql 'SELECT 1' --no-interacti
 sudo -u www-data php8.4 bin/console app:update --no-interaction
 # The noninteractive updater only updates already installed content.
 # Install the complete bundled 3.x catalog on a fresh deployment.
-sudo -u www-data php8.4 bin/console app:templates:install --all --no-interaction
-sudo -u www-data php8.4 bin/console app:screen-layouts:install --all --no-interaction
+sudo -u www-data php8.4 bin/console app:templates:install --all --update --no-interaction
+sudo -u www-data php8.4 bin/console app:screen-layouts:install --all --update --no-interaction
 sudo -u www-data php8.4 bin/console app:templates:list
 sudo -u www-data php8.4 bin/console app:screen-layouts:list
 sudo -u www-data php8.4 bin/console cache:clear --env=prod --no-debug
