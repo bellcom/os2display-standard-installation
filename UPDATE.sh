@@ -274,7 +274,8 @@ if [ "$DB_EXISTS" -eq 1 ]; then
 
     printf "Database backup: %s\n" "$DB_BACKUP_FILE"
 else
-    printf "\nWARNING: Database %s was not found; skipping database dump.\n" "$CHECK_DB"
+    error "Database $CHECK_DB was not found. Refusing upgrade without database backup."
+    exit 1
 fi
 
 printf "\nBacking up document root...\n"
@@ -403,8 +404,20 @@ else
         --no-scripts
 fi
 
-printf "\nRemoving stale Symfony production cache before Composer auto-scripts\n"
-rm -rf "$PUBLIC_HTML/var/cache/prod" "$PUBLIC_HTML/var/cache/prod~"
+printf "\nMoving stale Symfony production cache aside before Composer auto-scripts\n"
+# A live web worker may recreate cache files while rm -rf walks the tree.
+# Rename the old cache atomically and let Symfony create a fresh one.
+for cache_dir in "$PUBLIC_HTML/var/cache/prod" "$PUBLIC_HTML/var/cache/prod~"; do
+    if [ -d "$cache_dir" ]; then
+        moved_cache="${cache_dir}.before-v2-${TIMESTAMP}"
+        if [ -e "$moved_cache" ]; then
+            error "Cache archive already exists: $moved_cache"
+            exit 1
+        fi
+        mv "$cache_dir" "$moved_cache"
+        printf 'Preserved old cache: %s\n' "$moved_cache"
+    fi
+done
 mkdir -p "$PUBLIC_HTML/var/cache"
 chown -R www-data:www-data "$PUBLIC_HTML/var"
 
