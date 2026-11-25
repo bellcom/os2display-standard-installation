@@ -758,8 +758,17 @@ chmod 0600 "$DB_BACKUP_FILE"
 printf 'Database backup: %s\n' "$DB_BACKUP_FILE"
 
 info "Backing up installation"
-cp -a "$WEB_ROOT" "$FILE_BACKUP_FOLDER"
-printf 'File backup: %s\n' "$FILE_BACKUP_FOLDER"
+# Avoid copying huge, actively-written Apache logs and failed prior V3 stages.
+# Keep the logs/ directory itself so an Apache vhost expecting it still works
+# after a restore, but exclude its volatile *.log contents.
+# GNU tar preserves ownership, modes, symlinks and dotfiles in the backup.
+tar -C "$(dirname "$WEB_ROOT")" \
+    --exclude="$DOMAIN/logs/*.log" \
+    --exclude="$DOMAIN/.${APP_DIR}-v3-*" \
+    -cf - "$DOMAIN" | tar -C "$BACKUP_FOLDER" -xf -
+test -d "$FILE_BACKUP_FOLDER" || { error "Installation backup missing"; exit 1; }
+test -f "$FILE_BACKUP_FOLDER/$APP_DIR/bin/console" || { error "Application missing from installation backup"; exit 1; }
+printf 'File backup (volatile Apache logs and old staging excluded): %s\n' "$FILE_BACKUP_FOLDER"
 
 STAGE_ROOT="$WEB_ROOT/.$APP_DIR-v3-$TIMESTAMP"
 if [ -e "$STAGE_ROOT" ]; then
