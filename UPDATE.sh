@@ -410,7 +410,7 @@ else
 
     sudo -u www-data composer require \
         'predis/predis:^3.3' \
-        --no-dev \
+        --update-no-dev \
         --no-interaction \
         --no-scripts
 fi
