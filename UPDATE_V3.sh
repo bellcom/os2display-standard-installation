@@ -858,7 +858,9 @@ DEFAULTENVPY
 
 install -o root -g www-data -m 0640 "$CONFIG_EXPORT" "$STAGE_ROOT/.env.local"
 printf '%s\n' "$TARGET_VERSION" > "$STAGE_ROOT/.os2display-version"
-mkdir -p "$STAGE_ROOT/var"
+# Symfony needs writable cache and log directories during staged preflight.
+# Create both paths explicitly: release artifacts may ship an empty var/ tree.
+mkdir -p "$STAGE_ROOT/var/cache/prod" "$STAGE_ROOT/var/log"
 
 chown -R root:www-data "$STAGE_ROOT"
 chown -R www-data:www-data \
