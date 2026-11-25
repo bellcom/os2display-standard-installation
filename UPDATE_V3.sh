@@ -426,8 +426,10 @@ APACHE_VHOSTS=()
 for candidate in \
     "/etc/apache2/sites-available/$DOMAIN.conf" \
     "/etc/apache2/sites-available/$DOMAIN-ssl.conf" \
+    "/etc/apache2/sites-available/$DOMAIN-le-ssl.conf" \
     "/etc/apache2/sites-enabled/$DOMAIN.conf" \
-    "/etc/apache2/sites-enabled/$DOMAIN-ssl.conf"
+    "/etc/apache2/sites-enabled/$DOMAIN-ssl.conf" \
+    "/etc/apache2/sites-enabled/$DOMAIN-le-ssl.conf"
 do
     [ -e "$candidate" ] || continue
     resolved="$(readlink -f "$candidate")"
