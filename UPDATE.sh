@@ -400,6 +400,7 @@ else
 
     sudo -u www-data composer require \
         'predis/predis:^3.3' \
+        --no-dev \
         --no-interaction \
         --no-scripts
 fi
@@ -421,7 +422,10 @@ done
 mkdir -p "$PUBLIC_HTML/var/cache"
 chown -R www-data:www-data "$PUBLIC_HTML/var"
 
+# Production installs must not resolve dev-only tooling such as Psalm 5.x,
+# which is incompatible with PHP 8.4 despite the application itself supporting it.
 sudo -u www-data composer install \
+    --no-dev \
     --optimize-autoloader \
     --no-interaction
 
